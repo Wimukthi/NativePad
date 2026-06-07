@@ -1,0 +1,32 @@
+#pragma once
+
+// Command IDs shared by popup menu creation, accelerator dispatch, and command
+// handling. Keep new command ranges grouped by menu.
+#define IDI_NATIVEPAD 100
+#define IDR_MAINMENU 101
+#define ID_FILE_NEW 40001
+#define ID_FILE_OPEN 40002
+#define ID_FILE_SAVE 40003
+#define ID_FILE_SAVE_AS 40004
+#define ID_FILE_PAGE_SETUP 40005
+#define ID_FILE_PRINT 40006
+#define ID_FILE_EXIT 40007
+#define ID_EDIT_UNDO 40101
+#define ID_EDIT_REDO 40102
+#define ID_EDIT_CUT 40103
+#define ID_EDIT_COPY 40104
+#define ID_EDIT_PASTE 40105
+#define ID_EDIT_DELETE 40106
+#define ID_EDIT_FIND 40107
+#define ID_EDIT_FIND_NEXT 40108
+#define ID_EDIT_FIND_PREVIOUS 40109
+#define ID_EDIT_REPLACE 40110
+#define ID_EDIT_GO_TO 40111
+#define ID_EDIT_SELECT_ALL 40112
+#define ID_EDIT_TIME_DATE 40113
+#define ID_FORMAT_WORD_WRAP 40201
+#define ID_FORMAT_FONT 40202
+#define ID_VIEW_STATUS_BAR 40301
+#define ID_VIEW_DARK_MODE 40302
+#define ID_VIEW_LINE_NUMBERS 40303
+#define ID_HELP_ABOUT 40401
