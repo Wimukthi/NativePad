@@ -94,6 +94,16 @@ The CI job currently targets `windows-2025-vs2026` because the project uses the
 Visual Studio 2026/MSVC `v145` toolset. If the hosted runner labels change, keep
 this file and the workflow aligned with the toolset declared in the solution.
 
+## Release Packaging
+
+The manual `Release Package` workflow lives at
+`.github/workflows/release-package.yml`. It builds Release x64, runs the Release
+test binary, creates `NativePad-<version>-win-x64.zip`, and uploads it as a
+workflow artifact.
+
+Run it from GitHub Actions with the version matching `src/NativePad.rc`. Before
+publishing the artifact, complete [Release Checklist](RELEASE_CHECKLIST.md).
+
 ## Test Coverage
 
 Current tests cover:

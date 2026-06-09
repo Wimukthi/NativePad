@@ -9,7 +9,7 @@ This table describes the current implementation state, not the final target.
 | New | Done | Prompts to save dirty document |
 | Open | Done | Common file dialog, drag/drop, command-line path |
 | Save | Done | Preserves detected encoding and line endings for editable documents |
-| Save As | Done | Common save dialog |
+| Save As | Done | Native save dialog with encoding picker |
 | Page Setup | Done | Native page setup dialog |
 | Print | Done | Native print dialog; pagination/spooling on worker thread |
 | Exit | Done | Dirty prompt |
@@ -47,7 +47,7 @@ This table describes the current implementation state, not the final target.
 | UTF-8 load | Done | BOM and no-BOM paths |
 | UTF-16 LE/BE load | Done | BOM detected |
 | ANSI fallback load | Done | Used when UTF-8 decode fails |
-| Save encoding | Done | Preserves UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI where representable |
+| Save encoding | Done | Preserves UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI where representable; Save As can change encoding |
 | Line-ending preservation | Done | CRLF/LF/CR files normalize back to detected style; mixed files are left mixed |
 | Preferences | Done | Persists dark override, word wrap, line numbers, status bar, font, window placement, and page margins |
 | Large-file viewing | Done | Read-only mapped backend above editable limit |
@@ -57,6 +57,4 @@ This table describes the current implementation state, not the final target.
 
 - Mapped large files are read-only.
 - UTF-8/ANSI mapped files use byte offsets internally.
-- Save As does not yet expose a classic-style encoding picker; it preserves the
-  current document encoding.
 - Print fidelity needs more manual testing against classic Notepad behavior.

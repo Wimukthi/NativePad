@@ -1,0 +1,50 @@
+name: Release Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label to use in the ZIP name
+        required: true
+        default: 1.0.0.0
+
+jobs:
+  package:
+    name: Package win-x64
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Build Release
+        run: msbuild NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
+
+      - name: Test Release
+        run: .\bin\x64\Release\NativePad.Tests.exe
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          $stage = Join-Path $env:RUNNER_TEMP "NativePad-$version-win-x64"
+          $zip = "NativePad-$version-win-x64.zip"
+
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          Copy-Item -LiteralPath ".\bin\x64\Release\NativePad.exe" -Destination $stage
+          Copy-Item -LiteralPath ".\README.md" -Destination $stage
+          Copy-Item -LiteralPath ".\LICENSE" -Destination $stage
+          Copy-Item -LiteralPath ".\docs" -Destination (Join-Path $stage "docs") -Recurse
+
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: NativePad-${{ inputs.version }}-win-x64
+          path: NativePad-${{ inputs.version }}-win-x64.zip
+          if-no-files-found: error

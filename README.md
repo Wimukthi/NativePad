@@ -31,6 +31,7 @@ Key docs:
 - [Large Files](docs/LARGE_FILES.md)
 - [UI and Theming](docs/UI_AND_THEMING.md)
 - [Versioning](docs/VERSIONING.md)
+- [Release Checklist](docs/RELEASE_CHECKLIST.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Classic Notepad Parity](docs/CLASSIC_NOTEPAD_PARITY.md)
 

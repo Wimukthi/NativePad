@@ -70,5 +70,11 @@ void RunTextFormatTests() {
     }
     ExpectBytes(*ansi, {'A', 'B', 'C'}, "ANSI encode");
 
+    error.clear();
+    auto unsupportedAnsi = NativePad::EncodeTextBytes(L"\U0001F600", TextEncoding::Ansi, LineEnding::CrLf, error);
+    if (unsupportedAnsi) {
+        throw std::runtime_error("ANSI encode unexpectedly accepted unsupported text");
+    }
+
     std::cout << "TextFormat tests passed\n";
 }

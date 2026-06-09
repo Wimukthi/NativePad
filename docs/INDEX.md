@@ -11,8 +11,9 @@ rules for extending it.
 4. [Large Files](LARGE_FILES.md)
 5. [UI and Theming](UI_AND_THEMING.md)
 6. [Versioning](VERSIONING.md)
-7. [Contributing](CONTRIBUTING.md)
-8. [Classic Notepad Parity](CLASSIC_NOTEPAD_PARITY.md)
+7. [Release Checklist](RELEASE_CHECKLIST.md)
+8. [Contributing](CONTRIBUTING.md)
+9. [Classic Notepad Parity](CLASSIC_NOTEPAD_PARITY.md)
 
 ## Project Goals
 

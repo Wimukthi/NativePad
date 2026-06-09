@@ -17,8 +17,8 @@ NativePad targets feature parity with the last classic, menu-driven Windows Note
 - UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI fallback loading; Save preserves
   detected encoding and line endings where representable.
 - Memory-mapped normal file loading and a read-only mapped backend for files above the editable limit.
-- Remaining gaps are the explicit Save As encoding picker, editable large-file
-  storage, and broader print fidelity validation against classic Notepad.
+- Remaining gaps are editable large-file storage and broader print fidelity
+  validation against classic Notepad.
 
 ## Phase 1: Core classic command parity
 
@@ -43,8 +43,8 @@ Goal: reduce surprises when opening, editing, and saving ordinary text files.
 
 - Done: preserve detected line endings when saving unless the file was mixed-line
   content or the document was newly created.
-- Done: preserve encoding choice where possible, with explicit Save As encoding
-  UI still pending.
+- Done: preserve encoding choice where possible, with Save As exposing UTF-8,
+  UTF-8 BOM, UTF-16 LE/BE, and ANSI choices.
 - Detect UTF-8 with BOM, UTF-8 without BOM, UTF-16 LE, UTF-16 BE, and ANSI consistently.
 - Keep dirty-state prompts aligned with classic Notepad for New, Open, Exit, drag/drop, and command-line open.
 - Implement Go To behavior that is disabled while Word Wrap is enabled, matching classic Notepad behavior.
@@ -129,7 +129,8 @@ Acceptance:
 7. Done: add line-ending and encoding preservation.
 8. Done: add persisted preferences for the main visual/editor choices.
 9. Done: add optional persisted line numbers as a NativePad view extension.
-10. Expand smoke tests and manual parity checklist.
+10. Done: add a Save As encoding picker.
+11. Expand smoke tests and manual parity checklist.
 
 ## Manual parity checklist
 
@@ -139,5 +140,5 @@ Acceptance:
 - View: Line Numbers, Status Bar.
 - Help: About.
 - Behavior: dirty prompts, command-line open, drag/drop open, dark/light mode,
-  read-only mapped viewing, encoding load/save, mouse selection, line/column
-  status, keyboard shortcuts.
+  read-only mapped viewing, encoding load/save and Save As encoding changes,
+  mouse selection, line/column status, keyboard shortcuts.

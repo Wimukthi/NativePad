@@ -57,7 +57,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>Comctl32.lib;Comdlg32.lib;Dwmapi.lib;UxTheme.lib;D2d1.lib;Dwrite.lib;Advapi32.lib;Shell32.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Comctl32.lib;Comdlg32.lib;Dwmapi.lib;UxTheme.lib;D2d1.lib;Dwrite.lib;Advapi32.lib;Shell32.lib;Ole32.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>src\app.manifest</AdditionalManifestFiles>
@@ -78,7 +78,7 @@
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Comctl32.lib;Comdlg32.lib;Dwmapi.lib;UxTheme.lib;D2d1.lib;Dwrite.lib;Advapi32.lib;Shell32.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Comctl32.lib;Comdlg32.lib;Dwmapi.lib;UxTheme.lib;D2d1.lib;Dwrite.lib;Advapi32.lib;Shell32.lib;Ole32.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>src\app.manifest</AdditionalManifestFiles>

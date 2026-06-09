@@ -2,11 +2,13 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <dwmapi.h>
+#include <shobjidl.h>
 #include <shellapi.h>
 #include <strsafe.h>
 #include <uxtheme.h>
 #include <winver.h>
 #include <windowsx.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
@@ -77,6 +79,7 @@ constexpr int kFontStyleListId = 50204;
 constexpr int kFontSizeEditId = 50205;
 constexpr int kFontSizeListId = 50206;
 constexpr int kFontPreviewId = 50207;
+constexpr DWORD kSaveEncodingComboId = 50301;
 constexpr UINT WM_NATIVEPAD_PRINT_COMPLETE = WM_APP + 302;
 constexpr UINT WM_NATIVEPAD_FIND_REPLACE = WM_APP + 303;
 
@@ -158,6 +161,40 @@ struct ThemeColors {
     COLORREF statusBackground;
     COLORREF statusText;
 };
+
+struct SaveEncodingOption {
+    DWORD id{};
+    NativePad::TextEncoding encoding{NativePad::TextEncoding::Utf8};
+    const wchar_t* label{};
+};
+
+constexpr std::array<SaveEncodingOption, 5> kSaveEncodingOptions{{
+    {1, NativePad::TextEncoding::Utf8, L"UTF-8"},
+    {2, NativePad::TextEncoding::Utf8Bom, L"UTF-8 with BOM"},
+    {3, NativePad::TextEncoding::Utf16Le, L"UTF-16 LE"},
+    {4, NativePad::TextEncoding::Utf16Be, L"UTF-16 BE"},
+    {5, NativePad::TextEncoding::Ansi, L"ANSI"},
+}};
+
+const SaveEncodingOption& SaveEncodingOptionForEncoding(NativePad::TextEncoding encoding) noexcept {
+    for (const auto& option : kSaveEncodingOptions) {
+        if (option.encoding == encoding) {
+            return option;
+        }
+    }
+
+    return kSaveEncodingOptions.front();
+}
+
+const SaveEncodingOption& SaveEncodingOptionForId(DWORD id) noexcept {
+    for (const auto& option : kSaveEncodingOptions) {
+        if (option.id == id) {
+            return option;
+        }
+    }
+
+    return kSaveEncodingOptions.front();
+}
 
 ThemeColors ColorsForTheme(bool dark) {
     // Keep application chrome colors centralized so owner-draw menus, status bar,
@@ -1404,7 +1441,15 @@ std::optional<std::wstring> ShowOpenDialog(HWND owner) {
     return std::wstring(buffer.data());
 }
 
-std::optional<std::wstring> ShowSaveDialog(HWND owner, const std::wstring& currentPath) {
+struct SaveDialogResult {
+    std::wstring path;
+    NativePad::TextEncoding encoding{NativePad::TextEncoding::Utf8};
+};
+
+std::optional<SaveDialogResult> ShowLegacySaveDialog(
+    HWND owner,
+    const std::wstring& currentPath,
+    NativePad::TextEncoding currentEncoding) {
     std::array<wchar_t, 32768> buffer{};
     if (!currentPath.empty()) {
         StringCchCopyW(buffer.data(), buffer.size(), currentPath.c_str());
@@ -1423,7 +1468,111 @@ std::optional<std::wstring> ShowSaveDialog(HWND owner, const std::wstring& curre
         return std::nullopt;
     }
 
-    return std::wstring(buffer.data());
+    return SaveDialogResult{std::wstring(buffer.data()), currentEncoding};
+}
+
+std::wstring FileNamePart(const std::wstring& path) {
+    const std::wstring::size_type separator = path.find_last_of(L"\\/");
+    return separator == std::wstring::npos ? path : path.substr(separator + 1);
+}
+
+std::wstring ParentDirectoryPart(const std::wstring& path) {
+    const std::wstring::size_type separator = path.find_last_of(L"\\/");
+    if (separator == std::wstring::npos) {
+        return {};
+    }
+
+    if (separator == 2 && path.size() >= 3 && path[1] == L':' && (path[2] == L'\\' || path[2] == L'/')) {
+        return path.substr(0, 3);
+    }
+
+    return path.substr(0, separator);
+}
+
+std::optional<SaveDialogResult> ShowSaveDialog(
+    HWND owner,
+    const std::wstring& currentPath,
+    NativePad::TextEncoding currentEncoding) {
+    using Microsoft::WRL::ComPtr;
+
+    ComPtr<IFileSaveDialog> dialog;
+    HRESULT hr = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr)) {
+        return ShowLegacySaveDialog(owner, currentPath, currentEncoding);
+    }
+
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options))) {
+        dialog->SetOptions(options | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM);
+    }
+
+    COMDLG_FILTERSPEC filters[] = {
+        {L"Text Documents (*.txt)", L"*.txt"},
+        {L"All Files (*.*)", L"*.*"},
+    };
+    dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
+    dialog->SetFileTypeIndex(1);
+    dialog->SetDefaultExtension(L"txt");
+    dialog->SetTitle(L"Save As");
+
+    if (!currentPath.empty()) {
+        const std::wstring fileName = FileNamePart(currentPath);
+        if (!fileName.empty()) {
+            dialog->SetFileName(fileName.c_str());
+        }
+
+        const std::wstring parent = ParentDirectoryPart(currentPath);
+        if (!parent.empty()) {
+            ComPtr<IShellItem> folder;
+            if (SUCCEEDED(SHCreateItemFromParsingName(parent.c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
+                dialog->SetFolder(folder.Get());
+            }
+        }
+    }
+
+    ComPtr<IFileDialogCustomize> customize;
+    const bool hasEncodingPicker = SUCCEEDED(dialog.As(&customize));
+    if (hasEncodingPicker) {
+        // The modern file dialog owns layout and accessibility; NativePad only
+        // contributes the classic Notepad-style encoding choice.
+        customize->AddComboBox(kSaveEncodingComboId);
+        customize->SetControlLabel(kSaveEncodingComboId, L"Encoding:");
+        for (const auto& option : kSaveEncodingOptions) {
+            customize->AddControlItem(kSaveEncodingComboId, option.id, option.label);
+        }
+        customize->SetSelectedControlItem(kSaveEncodingComboId, SaveEncodingOptionForEncoding(currentEncoding).id);
+    }
+
+    hr = dialog->Show(owner);
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        return std::nullopt;
+    }
+    if (FAILED(hr)) {
+        return std::nullopt;
+    }
+
+    DWORD selectedEncodingId = SaveEncodingOptionForEncoding(currentEncoding).id;
+    if (hasEncodingPicker) {
+        customize->GetSelectedControlItem(kSaveEncodingComboId, &selectedEncodingId);
+    }
+
+    ComPtr<IShellItem> result;
+    if (FAILED(dialog->GetResult(&result))) {
+        return std::nullopt;
+    }
+
+    PWSTR rawPath = nullptr;
+    const HRESULT pathHr = result->GetDisplayName(SIGDN_FILESYSPATH, &rawPath);
+    if (FAILED(pathHr) || rawPath == nullptr) {
+        if (rawPath != nullptr) {
+            CoTaskMemFree(rawPath);
+        }
+        return std::nullopt;
+    }
+
+    SaveDialogResult saveResult{std::wstring(rawPath), SaveEncodingOptionForId(selectedEncodingId).encoding};
+    CoTaskMemFree(rawPath);
+    return saveResult;
 }
 
 LOGFONTW LogFontFromEditorFont(const NativePad::EditorFontSpec& font, UINT dpi) {
@@ -5507,23 +5656,26 @@ private:
         }
 
         std::wstring path = currentPath_;
+        NativePad::TextEncoding targetEncoding = documentEncoding_;
         if (saveAs || path.empty()) {
-            auto selected = ShowSaveDialog(hwnd_, path);
+            auto selected = ShowSaveDialog(hwnd_, path, targetEncoding);
             if (!selected) {
                 return false;
             }
-            path = *selected;
+            path = selected->path;
+            targetEncoding = selected->encoding;
         }
 
         const std::wstring text = EditorText();
         std::wstring error;
-        if (!WriteTextFile(path, text, documentEncoding_, documentLineEnding_, error)) {
+        if (!WriteTextFile(path, text, targetEncoding, documentLineEnding_, error)) {
             std::wstring message = L"Could not save file:\n\n" + error;
             MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
             return false;
         }
 
         currentPath_ = path;
+        documentEncoding_ = targetEncoding;
         encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
         dirty_ = false;
         UpdateTitle();
@@ -5608,6 +5760,11 @@ private:
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     EnableProcessDpiAwareness();
 
+    // The Vista+ common file dialogs use COM, and the Save As encoding picker
+    // is added through IFileDialogCustomize before the dialog is shown.
+    const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool shouldUninitializeCom = SUCCEEDED(comInit);
+
     INITCOMMONCONTROLSEX commonControls{};
     commonControls.dwSize = sizeof(commonControls);
     commonControls.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
@@ -5615,6 +5772,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     AppWindow app(instance);
     if (!app.Create(showCommand)) {
+        if (shouldUninitializeCom) {
+            CoUninitialize();
+        }
         return 1;
     }
 
@@ -5663,6 +5823,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     if (acceleratorTable != nullptr) {
         DestroyAcceleratorTable(acceleratorTable);
+    }
+
+    if (shouldUninitializeCom) {
+        CoUninitialize();
     }
 
     return static_cast<int>(message.wParam);
