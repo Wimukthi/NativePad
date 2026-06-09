@@ -45,12 +45,16 @@ value is intentionally device-pixel based.
 
 NativePad currently has custom dialogs for:
 
+- About.
 - Go To.
 - Find/Replace.
 - Font.
 
 They use normal child controls where possible, with custom parent-painted
 backgrounds and borders.
+Dialogs rely on the native DWM frame and shadow. Avoid adding separate shadow
+helper windows around dialogs because they do not match the DWM-rounded frame
+and can read as extra window chrome.
 
 Important conventions:
 
@@ -66,8 +70,12 @@ The menu strip is a custom child window rather than the built-in menu bar. Popup
 menus are owner-drawn so item text, accelerator text, separators, selected rows,
 disabled text, and borders match dark mode.
 
-The popup `#32768` menu window is adjusted with a CBT hook so its edge blends
-with the dark frame.
+Popup menus are no-activate top-level windows. A click-through layered shadow
+window is shown behind each popup so the shadow remains visible in dark mode
+while preserving the same active-window behavior as standard Win32 menus.
+When a popup has mouse capture, outside right-clicks are re-resolved against the
+main window and reposted as `WM_CONTEXTMENU` so the editor context menu can open
+without leaving the top-level menu stuck open.
 
 ## Editor Surface
 

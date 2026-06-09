@@ -49,6 +49,7 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"NativePadWindow";
 constexpr wchar_t kMenuStripClass[] = L"NativePadMenuStrip";
 constexpr wchar_t kPopupMenuClass[] = L"NativePadPopupMenu";
+constexpr wchar_t kPopupShadowClass[] = L"NativePadPopupShadow";
 constexpr wchar_t kAboutDialogClass[] = L"NativePadAboutDialog";
 constexpr wchar_t kGoToDialogClass[] = L"NativePadGoToDialog";
 constexpr wchar_t kFindReplaceDialogClass[] = L"NativePadFindReplaceDialog";
@@ -217,6 +218,7 @@ struct PopupMenuItem {
 struct PopupMenuWindowState {
     HWND hwnd{};
     HWND owner{};
+    HWND shadow{};
     UINT dpi{USER_DEFAULT_SCREEN_DPI};
     HFONT font{};
     bool dark{false};
@@ -225,8 +227,65 @@ struct PopupMenuWindowState {
     UINT command{};
 };
 
+struct PopupShadowMetrics {
+    int margin{};
+    int offsetX{};
+    int offsetY{};
+    int radius{};
+    BYTE maxAlpha{};
+    SIZE windowSize{};
+    RECT popupRect{};
+    RECT casterRect{};
+};
+
 int PopupScale(const PopupMenuWindowState* state, int value) {
     return ScaleForDpi(value, state != nullptr ? state->dpi : USER_DEFAULT_SCREEN_DPI);
+}
+
+PopupShadowMetrics PopupShadowMetricsForDpi(SIZE popupSize, UINT dpi) {
+    PopupShadowMetrics metrics{};
+    metrics.radius = ScaleForDpi(14, dpi);
+    metrics.margin = ScaleForDpi(12, dpi);
+    metrics.offsetX = ScaleForDpi(2, dpi);
+    metrics.offsetY = ScaleForDpi(4, dpi);
+    metrics.maxAlpha = 58;
+    metrics.windowSize = {
+        popupSize.cx + (metrics.margin * 2) + metrics.offsetX,
+        popupSize.cy + (metrics.margin * 2) + metrics.offsetY,
+    };
+    metrics.popupRect = {
+        metrics.margin,
+        metrics.margin,
+        metrics.margin + popupSize.cx,
+        metrics.margin + popupSize.cy,
+    };
+    metrics.casterRect = {
+        metrics.margin + metrics.offsetX,
+        metrics.margin + metrics.offsetY,
+        metrics.margin + metrics.offsetX + popupSize.cx,
+        metrics.margin + metrics.offsetY + popupSize.cy,
+    };
+    return metrics;
+}
+
+BYTE PopupShadowAlphaForPixel(const PopupShadowMetrics& metrics, int x, int y) {
+    if (x >= metrics.popupRect.left && x < metrics.popupRect.right && y >= metrics.popupRect.top && y < metrics.popupRect.bottom) {
+        return 0;
+    }
+
+    const int dx = std::max(
+        std::max(static_cast<int>(metrics.casterRect.left) - x, 0),
+        x - static_cast<int>(metrics.casterRect.right - 1));
+    const int dy = std::max(
+        std::max(static_cast<int>(metrics.casterRect.top) - y, 0),
+        y - static_cast<int>(metrics.casterRect.bottom - 1));
+    const double distance = std::sqrt(static_cast<double>((dx * dx) + (dy * dy)));
+    if (distance > static_cast<double>(metrics.radius)) {
+        return 0;
+    }
+
+    const double falloff = 1.0 - (distance / static_cast<double>(metrics.radius));
+    return static_cast<BYTE>(static_cast<double>(metrics.maxAlpha) * falloff * falloff);
 }
 
 int HitTestPopupMenuItem(const PopupMenuWindowState* state, POINT point) {
@@ -242,6 +301,52 @@ int HitTestPopupMenuItem(const PopupMenuWindowState* state, POINT point) {
     }
 
     return -1;
+}
+
+bool IsPointInsideWindowClient(HWND hwnd, POINT point) {
+    RECT client{};
+    return hwnd != nullptr && GetClientRect(hwnd, &client) && PtInRect(&client, point);
+}
+
+HWND PopupContextTargetAtScreenPoint(const PopupMenuWindowState* state, POINT screenPoint) {
+    if (state == nullptr || state->owner == nullptr) {
+        return nullptr;
+    }
+
+    HWND target = WindowFromPoint(screenPoint);
+    if (target != nullptr &&
+        target != state->hwnd &&
+        target != state->shadow &&
+        (target == state->owner || IsChild(state->owner, target))) {
+        return target;
+    }
+
+    POINT ownerPoint = screenPoint;
+    if (!ScreenToClient(state->owner, &ownerPoint) || !IsPointInsideWindowClient(state->owner, ownerPoint)) {
+        return nullptr;
+    }
+
+    // Mouse capture sends outside clicks to the popup. Re-resolve inside the
+    // owner so a right-click over the editor still follows the normal
+    // WM_CONTEXTMENU route after the open top-level menu is dismissed.
+    HWND child = ChildWindowFromPointEx(state->owner, ownerPoint, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
+    return child != nullptr ? child : state->owner;
+}
+
+void PostPopupContextMenu(PopupMenuWindowState* state, POINT popupClientPoint) {
+    if (state == nullptr || state->hwnd == nullptr || IsPointInsideWindowClient(state->hwnd, popupClientPoint)) {
+        return;
+    }
+
+    POINT screenPoint = popupClientPoint;
+    ClientToScreen(state->hwnd, &screenPoint);
+    HWND target = PopupContextTargetAtScreenPoint(state, screenPoint);
+    if (target == nullptr) {
+        return;
+    }
+
+    const LPARAM packedPoint = MAKELPARAM(screenPoint.x, screenPoint.y);
+    PostMessageW(state->owner, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(target), packedPoint);
 }
 
 void SelectAdjacentPopupItem(PopupMenuWindowState* state, int direction) {
@@ -344,6 +449,131 @@ void PaintCustomPopupMenu(PopupMenuWindowState* state) {
     EndPaint(state->hwnd, &ps);
 }
 
+LRESULT CALLBACK PopupShadowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_NCHITTEST) {
+        return HTTRANSPARENT;
+    }
+    if (message == WM_MOUSEACTIVATE) {
+        return MA_NOACTIVATE;
+    }
+
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+bool RegisterShadowWindowClass(HINSTANCE instance) {
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = &PopupShadowProc;
+    wc.hInstance = instance;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = kPopupShadowClass;
+    return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+bool UpdatePopupShadowBitmap(HWND shadow, SIZE popupSize, UINT dpi) {
+    if (shadow == nullptr || popupSize.cx <= 0 || popupSize.cy <= 0) {
+        return false;
+    }
+
+    const PopupShadowMetrics metrics = PopupShadowMetricsForDpi(popupSize, dpi);
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = metrics.windowSize.cx;
+    bitmapInfo.bmiHeader.biHeight = -metrics.windowSize.cy;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    HDC screenDc = GetDC(nullptr);
+    if (screenDc == nullptr) {
+        return false;
+    }
+
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screenDc, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (bitmap == nullptr || bits == nullptr) {
+        if (bitmap != nullptr) {
+            DeleteObject(bitmap);
+        }
+        ReleaseDC(nullptr, screenDc);
+        return false;
+    }
+
+    auto* pixels = static_cast<std::uint32_t*>(bits);
+    for (int y = 0; y < metrics.windowSize.cy; ++y) {
+        for (int x = 0; x < metrics.windowSize.cx; ++x) {
+            const BYTE alpha = PopupShadowAlphaForPixel(metrics, x, y);
+            pixels[(static_cast<size_t>(y) * static_cast<size_t>(metrics.windowSize.cx)) + static_cast<size_t>(x)] =
+                static_cast<std::uint32_t>(alpha) << 24;
+        }
+    }
+
+    HDC memoryDc = CreateCompatibleDC(screenDc);
+    if (memoryDc == nullptr) {
+        DeleteObject(bitmap);
+        ReleaseDC(nullptr, screenDc);
+        return false;
+    }
+
+    HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
+    POINT source{0, 0};
+    SIZE size = metrics.windowSize;
+    BLENDFUNCTION blend{};
+    blend.BlendOp = AC_SRC_OVER;
+    blend.SourceConstantAlpha = 255;
+    blend.AlphaFormat = AC_SRC_ALPHA;
+
+    const BOOL updated = UpdateLayeredWindow(shadow, screenDc, nullptr, &size, memoryDc, &source, 0, &blend, ULW_ALPHA);
+
+    SelectObject(memoryDc, oldBitmap);
+    DeleteDC(memoryDc);
+    DeleteObject(bitmap);
+    ReleaseDC(nullptr, screenDc);
+    return updated != FALSE;
+}
+
+HWND CreateShadowWindow(HWND owner, HINSTANCE instance, POINT targetPosition, SIZE targetSize, UINT dpi, bool topmost) {
+    if (!RegisterShadowWindowClass(instance)) {
+        return nullptr;
+    }
+
+    const PopupShadowMetrics metrics = PopupShadowMetricsForDpi(targetSize, dpi);
+    DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    if (topmost) {
+        exStyle |= WS_EX_TOPMOST;
+    }
+
+    HWND shadow = CreateWindowExW(
+        exStyle,
+        kPopupShadowClass,
+        nullptr,
+        WS_POPUP,
+        targetPosition.x - metrics.margin,
+        targetPosition.y - metrics.margin,
+        metrics.windowSize.cx,
+        metrics.windowSize.cy,
+        owner,
+        nullptr,
+        instance,
+        nullptr);
+    if (shadow == nullptr) {
+        return nullptr;
+    }
+
+    if (!UpdatePopupShadowBitmap(shadow, targetSize, dpi)) {
+        DestroyWindow(shadow);
+        return nullptr;
+    }
+
+    ShowWindow(shadow, SW_SHOWNOACTIVATE);
+    return shadow;
+}
+
+HWND CreatePopupShadowWindow(HWND owner, HINSTANCE instance, POINT popupPosition, SIZE popupSize, UINT dpi) {
+    return CreateShadowWindow(owner, instance, popupPosition, popupSize, dpi, true);
+}
+
 LRESULT CALLBACK CustomPopupMenuProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     auto* state = reinterpret_cast<PopupMenuWindowState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -386,6 +616,16 @@ LRESULT CALLBACK CustomPopupMenuProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         }
         return 0;
     }
+    case WM_RBUTTONUP: {
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (!IsPointInsideWindowClient(hwnd, point)) {
+            PostPopupContextMenu(state, point);
+            DestroyWindow(hwnd);
+        }
+        return 0;
+    }
+    case WM_RBUTTONDOWN:
+        return 0;
     case WM_KEYDOWN:
         if (wParam == VK_ESCAPE) {
             DestroyWindow(hwnd);
@@ -412,6 +652,10 @@ LRESULT CALLBACK CustomPopupMenuProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        if (state != nullptr && state->shadow != nullptr) {
+            DestroyWindow(state->shadow);
+            state->shadow = nullptr;
+        }
         if (GetCapture() == hwnd) {
             ReleaseCapture();
         }
@@ -4607,14 +4851,29 @@ private:
     }
 
     bool RegisterCustomPopupMenuClass() const {
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = &CustomPopupMenuProc;
-        wc.hInstance = instance_;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hbrBackground = nullptr;
-        wc.lpszClassName = kPopupMenuClass;
-        return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        auto registerClass = [](const WNDCLASSEXW& wc) {
+            return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        };
+
+        WNDCLASSEXW menuClass{};
+        menuClass.cbSize = sizeof(menuClass);
+        menuClass.lpfnWndProc = &CustomPopupMenuProc;
+        menuClass.hInstance = instance_;
+        menuClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        menuClass.hbrBackground = nullptr;
+        menuClass.lpszClassName = kPopupMenuClass;
+        if (!registerClass(menuClass)) {
+            return false;
+        }
+
+        WNDCLASSEXW shadowClass{};
+        shadowClass.cbSize = sizeof(shadowClass);
+        shadowClass.lpfnWndProc = &PopupShadowProc;
+        shadowClass.hInstance = instance_;
+        shadowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        shadowClass.hbrBackground = nullptr;
+        shadowClass.lpszClassName = kPopupShadowClass;
+        return registerClass(shadowClass);
     }
 
     std::vector<PopupMenuItem> SnapshotPopupMenuItems(HMENU menu) const {
@@ -4713,6 +4972,7 @@ private:
 
         const SIZE size = LayoutCustomPopupMenuItems(state.items);
         const POINT position = ClampPopupMenuPosition(POINT{x, y}, size);
+        state.shadow = CreatePopupShadowWindow(hwnd_, instance_, position, size, dpi_);
 
         HWND popup = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
@@ -4728,7 +4988,13 @@ private:
             instance_,
             &state);
         if (popup == nullptr) {
+            if (state.shadow != nullptr) {
+                DestroyWindow(state.shadow);
+            }
             return 0;
+        }
+        if (state.shadow != nullptr) {
+            SetWindowPos(state.shadow, popup, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         }
 
         // A small modal message loop gives the custom popup native menu behavior

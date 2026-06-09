@@ -85,6 +85,15 @@ MappedTextDocument tests passed
 TextFormat tests passed
 ```
 
+## Continuous Integration
+
+GitHub Actions builds and tests both Debug x64 and Release x64 on Windows. The
+workflow lives at `.github/workflows/ci.yml`.
+
+The CI job currently targets `windows-2025-vs2026` because the project uses the
+Visual Studio 2026/MSVC `v145` toolset. If the hosted runner labels change, keep
+this file and the workflow aligned with the toolset declared in the solution.
+
 ## Test Coverage
 
 Current tests cover:

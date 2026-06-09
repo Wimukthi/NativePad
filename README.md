@@ -30,6 +30,7 @@ Key docs:
 - [Feature Matrix](docs/FEATURE_MATRIX.md)
 - [Large Files](docs/LARGE_FILES.md)
 - [UI and Theming](docs/UI_AND_THEMING.md)
+- [Versioning](docs/VERSIONING.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Classic Notepad Parity](docs/CLASSIC_NOTEPAD_PARITY.md)
 
@@ -54,3 +55,8 @@ Run tests:
 ```
 
 Debug uses the same commands with `Configuration=Debug`.
+
+## License
+
+NativePad is licensed under the GNU General Public License v3.0. See
+[LICENSE](LICENSE).
