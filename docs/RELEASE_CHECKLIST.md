@@ -6,8 +6,10 @@ dialogs, printing, DPI changes, and real-world file handling.
 
 ## Version and Build
 
-- Confirm `src/NativePad.rc` has the intended `FILEVERSION`,
-  `PRODUCTVERSION`, `FileVersion`, and `ProductVersion`.
+- Confirm `src/NativePad.rc` has the intended `major.minor.patch` before the
+  Release build. The build step increments the fourth component automatically.
+- Confirm `FILEVERSION`, `PRODUCTVERSION`, `FileVersion`, and `ProductVersion`
+  stay aligned after the build.
 - Confirm the About dialog shows the expected version, build timestamp, author,
   and GPL V3 license.
 - Build Release x64.
@@ -47,7 +49,7 @@ dialogs, printing, DPI changes, and real-world file handling.
 ## Format and View
 
 - Word Wrap toggles without corrupting scroll position.
-- Go To is disabled while Word Wrap is enabled.
+- Go To and status-bar line count remain available while Word Wrap is enabled.
 - Font dialog can resize without repaint artifacts.
 - Line Numbers toggle and persist.
 - Status Bar toggle persists and shows line, column, total lines, encoding, and
@@ -82,8 +84,13 @@ dialogs, printing, DPI changes, and real-world file handling.
 
 ## Packaging
 
-- Run the `Release Package` GitHub Actions workflow with the intended version.
+- Run the `Release Package` GitHub Actions workflow with the expected version
+  after automatic build increment.
 - Download and inspect the ZIP artifact.
 - Confirm the ZIP contains `NativePad.exe`, `README.md`, `LICENSE`, and `docs`.
 - Launch `NativePad.exe` from the extracted ZIP.
-- Keep unsigned ZIP releases clearly labeled until code signing is added.
+- Download and inspect the Inno Setup installer artifact.
+- Install NativePad from the installer, launch it from the Start Menu shortcut,
+  then uninstall it from Windows Settings.
+- Keep unsigned ZIP and installer releases clearly labeled until code signing is
+  added.

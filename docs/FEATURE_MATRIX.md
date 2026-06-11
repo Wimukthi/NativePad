@@ -25,7 +25,7 @@ This table describes the current implementation state, not the final target.
 | Find Next/Previous | Done | Wraps around |
 | Replace | Done | Editable documents only |
 | Replace All | Done | Editable documents only |
-| Go To | Done | Custom dark-aware dialog; disabled when Word Wrap is on |
+| Go To | Done | Custom dark-aware dialog; available regardless of Word Wrap |
 | Select All | Done | Works on editable and mapped documents |
 | Time/Date | Done | Inserts localized time/date into editable documents |
 | Context menu | Done | Editor right-click menu |
@@ -39,6 +39,13 @@ This table describes the current implementation state, not the final target.
 | Line Numbers | Done | Optional visual gutter; persisted; excluded from save/copy/search/print |
 | Status Bar | Done | Toggleable; shows line, column, total lines, encoding, and character count |
 | Dark Mode | Done | System default plus manual View toggle |
+
+## Help and System Integration
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| About | Done | Custom dark-aware dialog with version, build, author, and licence |
+| Set as Default Editor | Done | Registers NativePad per-user as a `.txt` handler, then opens Windows "Default apps" to confirm; Windows requires the user to confirm the default. Help menu shows a check when NativePad is the current default |
 
 ## Text and File Behavior
 

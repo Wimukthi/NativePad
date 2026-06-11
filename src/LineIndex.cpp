@@ -40,6 +40,27 @@ void LineIndex::ApplyEdit(std::size_t position, std::wstring_view erased, std::w
         documentLength_ -= erased.size() - inserted.size();
     }
 
+    const bool erasedHasNewline = erased.find(L'\n') != std::wstring_view::npos;
+    const bool insertedHasNewline = inserted.find(L'\n') != std::wstring_view::npos;
+
+    if (!erasedHasNewline && !insertedHasNewline) {
+        // Fast path: the edit stays within one line, so the line count is
+        // unchanged and only line starts after the edit shift by a constant
+        // delta. Update in place to avoid the per-keystroke allocation and the
+        // full second pass the general path performs.
+        if (inserted.size() != erased.size()) {
+            const std::ptrdiff_t delta =
+                static_cast<std::ptrdiff_t>(inserted.size()) - static_cast<std::ptrdiff_t>(erased.size());
+            for (std::size_t& start : starts_) {
+                if (start > position) {
+                    start = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(start) + delta);
+                }
+            }
+        }
+        GrowMaxLineLengthForEditAt(position);
+        return;
+    }
+
     std::vector<std::size_t> updated;
     updated.reserve(starts_.size() + inserted.size());
 
@@ -124,6 +145,22 @@ void LineIndex::RecomputeApproximateMaxLineLength() {
         if (end >= start) {
             maxLineLength_ = std::max(maxLineLength_, end - start);
         }
+    }
+}
+
+void LineIndex::GrowMaxLineLengthForEditAt(std::size_t position) {
+    // A within-line edit can only lengthen its own line. Grow the cached estimate
+    // for that one line in O(log lines); deletions never shrink it until the next
+    // Reset, which is acceptable for an approximate horizontal-scroll bound.
+    if (starts_.empty()) {
+        return;
+    }
+
+    const std::size_t line = LineFromPosition(position);
+    const std::size_t start = starts_[line];
+    const std::size_t end = line + 1 < starts_.size() ? starts_[line + 1] : documentLength_;
+    if (end >= start) {
+        maxLineLength_ = std::max(maxLineLength_, end - start);
     }
 }
 

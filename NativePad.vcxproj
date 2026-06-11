@@ -45,6 +45,9 @@
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)obj\$(Platform)\$(Configuration)\</IntDir>
     <TargetName>NativePad</TargetName>
+    <AutoIncrementVersion Condition="'$(AutoIncrementVersion)' == ''">true</AutoIncrementVersion>
+    <!-- Version increments are source-backed, so Visual Studio must invoke MSBuild even when outputs look current. -->
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -85,11 +88,21 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\AboutDialog.cpp" />
+    <ClCompile Include="src\DefaultEditor.cpp" />
     <ClCompile Include="src\DocumentBuffer.cpp" />
     <ClCompile Include="src\EditorView.cpp" />
+    <ClCompile Include="src\FileCodec.cpp" />
+    <ClCompile Include="src\FindReplaceDialog.cpp" />
+    <ClCompile Include="src\FontDialog.cpp" />
+    <ClCompile Include="src\GoToDialog.cpp" />
     <ClCompile Include="src\LineIndex.cpp" />
     <ClCompile Include="src\MappedTextDocument.cpp" />
+    <ClCompile Include="src\PopupMenu.cpp" />
+    <ClCompile Include="src\Printing.cpp" />
+    <ClCompile Include="src\Settings.cpp" />
     <ClCompile Include="src\TextFormat.cpp" />
+    <ClCompile Include="src\UiSupport.cpp" />
     <ClCompile Include="src\main.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -99,13 +112,29 @@
     <Image Include="icons\NativePad.ico" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="tools\Update-NativePadVersion.ps1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\AboutDialog.h" />
+    <ClInclude Include="src\DefaultEditor.h" />
     <ClInclude Include="src\DocumentBuffer.h" />
     <ClInclude Include="src\EditorView.h" />
+    <ClInclude Include="src\FileCodec.h" />
+    <ClInclude Include="src\FindReplaceDialog.h" />
+    <ClInclude Include="src\FontDialog.h" />
+    <ClInclude Include="src\GoToDialog.h" />
     <ClInclude Include="src\LineIndex.h" />
     <ClInclude Include="src\MappedTextDocument.h" />
+    <ClInclude Include="src\PopupMenu.h" />
+    <ClInclude Include="src\Printing.h" />
     <ClInclude Include="src\resource.h" />
+    <ClInclude Include="src\Settings.h" />
     <ClInclude Include="src\TextFormat.h" />
+    <ClInclude Include="src\UiSupport.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="IncrementNativePadVersion" BeforeTargets="PrepareForBuild" Condition="'$(AutoIncrementVersion)' == 'true' and '$(DesignTimeBuild)' != 'true'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\tools\Update-NativePadVersion.ps1&quot; -ResourceFile &quot;$(MSBuildProjectDirectory)\src\NativePad.rc&quot; -IncrementBuild" />
+  </Target>
   <ImportGroup Label="ExtensionTargets" />
 </Project>

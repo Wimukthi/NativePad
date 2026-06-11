@@ -17,6 +17,10 @@ The solution uses:
 
 ## Build From Developer PowerShell
 
+Building the NativePad app project automatically increments the fourth version
+component in `src\NativePad.rc`. Use `/p:AutoIncrementVersion=false` only for a
+diagnostic build where the source version must not change.
+
 Debug:
 
 ```powershell
@@ -98,11 +102,21 @@ this file and the workflow aligned with the toolset declared in the solution.
 
 The manual `Release Package` workflow lives at
 `.github/workflows/release-package.yml`. It builds Release x64, runs the Release
-test binary, creates `NativePad-<version>-win-x64.zip`, and uploads it as a
-workflow artifact.
+test binary, creates `NativePad-<version>-win-x64.zip`, builds the Inno Setup
+installer `NativePadSetup-<version>-win-x64.exe`, and uploads both files as
+workflow artifacts.
 
-Run it from GitHub Actions with the version matching `src/NativePad.rc`. Before
-publishing the artifact, complete [Release Checklist](RELEASE_CHECKLIST.md).
+Run it from GitHub Actions with the expected version after the build-time
+increment. Before publishing the artifact, complete
+[Release Checklist](RELEASE_CHECKLIST.md).
+
+The installer can also be built locally with:
+
+```powershell
+.\installer\build-installer.ps1
+```
+
+See [Installer](INSTALLER.md) for installer scope and file-association behavior.
 
 ## Test Coverage
 

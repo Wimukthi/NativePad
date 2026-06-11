@@ -35,6 +35,10 @@ Avoid comments that only restate simple assignments or obvious branches.
 - Keep `EditorView` backend-neutral through helper methods.
 - Route UI commands through `AppWindow`.
 - Do not let background threads touch HWND-owned UI state.
+- Keep shared Win32 UI helpers (theming, DPI scaling, control styling) in
+  `UiSupport`; do not duplicate them in feature files.
+- Give each dialog or self-contained feature its own translation unit with a
+  minimal header, and keep `main.cpp` limited to `AppWindow` and shell wiring.
 
 ## Adding Features
 
@@ -45,8 +49,11 @@ For user-facing commands:
 3. Add accelerator if classic Notepad has one.
 4. Route the command through `AppWindow::OnCommand`.
 5. Update `UpdateMenuState`.
-6. Add tests for non-UI logic.
-7. Update docs and parity status.
+6. For a new dialog or self-contained surface, add a dedicated `src/` module
+   exposing a single entry point, and register it in `NativePad.vcxproj` (and
+   `.filters`).
+7. Add tests for non-UI logic.
+8. Update docs and parity status.
 
 ## Testing Expectations
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,6 +29,10 @@ public:
     [[nodiscard]] wchar_t CharAt(std::size_t position) const;
     [[nodiscard]] std::wstring TextRange(std::size_t position, std::size_t length) const;
     [[nodiscard]] std::wstring Text() const;
+
+    // Substring search over the piece table without materializing the document.
+    // Returns the first match at or after (forward) / before (backward) start.
+    [[nodiscard]] std::optional<std::size_t> Find(std::wstring_view needle, std::size_t start, bool forward, bool matchCase) const;
 
 private:
     // A piece identifies a contiguous span in one of the backing strings.
@@ -58,6 +63,13 @@ private:
     std::wstring add_;
     std::vector<Piece> pieces_;
     std::size_t length_{0};
+
+    // Locate cache: piece-table reads during paint and search are highly
+    // sequential, so remembering the last piece turns most lookups into O(1)
+    // instead of a linear scan. Invalidated on any mutation.
+    mutable std::size_t cacheIndex_{0};
+    mutable std::size_t cachePieceStart_{0};
+    mutable bool cacheValid_{false};
 };
 
 } // namespace NativePad

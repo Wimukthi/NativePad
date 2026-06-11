@@ -35,7 +35,7 @@ Acceptance:
 
 - Every visible classic Notepad menu item exists and either works or is intentionally disabled only when classic Notepad would disable it.
 - Shortcuts route through the same command handlers as menu clicks.
-- Commands update enabled/disabled state when selection, read-only document state, or word wrap status changes.
+- Commands update enabled/disabled state when selection or read-only document state changes.
 
 ## Phase 2: Text behavior fidelity
 
@@ -47,7 +47,7 @@ Goal: reduce surprises when opening, editing, and saving ordinary text files.
   UTF-8 BOM, UTF-16 LE/BE, and ANSI choices.
 - Detect UTF-8 with BOM, UTF-8 without BOM, UTF-16 LE, UTF-16 BE, and ANSI consistently.
 - Keep dirty-state prompts aligned with classic Notepad for New, Open, Exit, drag/drop, and command-line open.
-- Implement Go To behavior that is disabled while Word Wrap is enabled, matching classic Notepad behavior.
+- Go To stays available while Word Wrap is enabled, matching modern Windows Notepad (classic Notepad disabled it under Word Wrap).
 - Keep status bar line/column updates correct with CRLF, LF, long lines, selection, and horizontal scrolling.
 
 Acceptance:
@@ -123,7 +123,7 @@ Acceptance:
 1. Done: add missing menus, command IDs, accelerators, and disabled-state plumbing.
 2. Done: implement Find/Find Next/Find Previous, validating editor selection, caret, and modeless dialog ownership.
 3. Done: add Replace, Go To, and the editor right-click context menu.
-4. Done: add Word Wrap and Status Bar toggle, with Go To disabled while wrapping is enabled.
+4. Done: add Word Wrap and Status Bar toggle (Go To remains available while wrapping, matching modern Notepad).
 5. Done: add Font dialog and editor rendering updates.
 6. Done: add Page Setup and Print, with print rendering/spooling on a worker thread.
 7. Done: add line-ending and encoding preservation.

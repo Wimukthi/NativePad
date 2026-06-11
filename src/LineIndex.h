@@ -24,6 +24,7 @@ private:
     // incremental edits it may be conservative, which is acceptable for scroll UI.
     static void AppendLineStarts(std::vector<std::size_t>& starts, std::size_t basePosition, std::wstring_view text);
     void RecomputeApproximateMaxLineLength();
+    void GrowMaxLineLengthForEditAt(std::size_t position);
 
     std::vector<std::size_t> starts_{0};
     std::size_t documentLength_{0};

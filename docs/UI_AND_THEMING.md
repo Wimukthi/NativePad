@@ -11,10 +11,15 @@ It owns:
 
 - Top-level window frame.
 - Custom menu strip.
-- Popup menus.
+- Popup menus (window classes and painting live in `src/PopupMenu.*`).
 - Editor child control.
 - Owner-draw status bar.
 - Dialog creation and command routing.
+
+Shared dark-mode plumbing — theme color palettes, DPI scaling, dark frame and
+control theming, and the owner-draw control helpers — lives in `src/UiSupport.*`
+and is reused by the shell and every custom dialog. Each dialog (Font, Find and
+Replace, Go To, About) is implemented in its own `src/*Dialog.*` module.
 
 ## Dark Mode
 

@@ -7,13 +7,14 @@ rules for extending it.
 
 1. [Architecture](ARCHITECTURE.md)
 2. [Build and Test](BUILD_AND_TEST.md)
-3. [Feature Matrix](FEATURE_MATRIX.md)
-4. [Large Files](LARGE_FILES.md)
-5. [UI and Theming](UI_AND_THEMING.md)
-6. [Versioning](VERSIONING.md)
-7. [Release Checklist](RELEASE_CHECKLIST.md)
-8. [Contributing](CONTRIBUTING.md)
-9. [Classic Notepad Parity](CLASSIC_NOTEPAD_PARITY.md)
+3. [Installer](INSTALLER.md)
+4. [Feature Matrix](FEATURE_MATRIX.md)
+5. [Large Files](LARGE_FILES.md)
+6. [UI and Theming](UI_AND_THEMING.md)
+7. [Versioning](VERSIONING.md)
+8. [Release Checklist](RELEASE_CHECKLIST.md)
+9. [Contributing](CONTRIBUTING.md)
+10. [Classic Notepad Parity](CLASSIC_NOTEPAD_PARITY.md)
 
 ## Project Goals
 
@@ -34,5 +35,7 @@ NativePad has two document paths:
 - Oversized documents use `MappedTextDocument`, a read-only memory-mapped backend
   that indexes line starts without loading the whole file into a `std::wstring`.
 
-The UI shell is `main.cpp`. The editor surface is `EditorView`, which knows how
-to render and navigate either backend.
+The UI shell centers on `AppWindow` in `main.cpp`, with dialogs, file I/O,
+printing, popup menus, settings, and shared theming factored into focused
+modules under `src/` (see [Architecture](ARCHITECTURE.md)). The editor surface
+is `EditorView`, which knows how to render and navigate either backend.

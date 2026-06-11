@@ -8,7 +8,14 @@ behavior remain explicit.
 
 | Component | Files | Responsibility |
 | --- | --- | --- |
-| Application shell | `src/main.cpp` | Main window, menus, dialogs, file I/O, command routing, status bar, printing, theming |
+| Application shell | `src/main.cpp` | `AppWindow` main window: menu strip, status bar, command routing, document/dirty state, preference load/save |
+| Shared UI support | `src/UiSupport.h`, `src/UiSupport.cpp` | Theme palettes, DPI scaling, dark-mode framing, and common control helpers used by the shell and every dialog |
+| Popup menus | `src/PopupMenu.h`, `src/PopupMenu.cpp` | Owner-drawn dark menu and context-menu windows plus the drop shadow |
+| File codec | `src/FileCodec.h`, `src/FileCodec.cpp` | Encoding detection, file read/write, large-file preview, and open/save pickers |
+| Printing | `src/Printing.h`, `src/Printing.cpp` | Threaded pagination/spooling worker |
+| Dialogs | `src/FontDialog.*`, `src/FindReplaceDialog.*`, `src/GoToDialog.*`, `src/AboutDialog.*` | Custom dark-mode modal/modeless dialogs, each exposing a single entry point |
+| Settings | `src/Settings.h`, `src/Settings.cpp` | Registry preference read/write under `HKCU\Software\NativePad` |
+| Default editor | `src/DefaultEditor.h`, `src/DefaultEditor.cpp` | Per-user file-association registration for `.txt` and the Windows "Default apps" hand-off |
 | Editor control | `src/EditorView.h`, `src/EditorView.cpp` | DirectWrite rendering, caret/selection, scrolling, input, clipboard, undo/redo |
 | Editable document | `src/DocumentBuffer.h`, `src/DocumentBuffer.cpp` | Piece-table storage for normal editable files |
 | Line index | `src/LineIndex.h`, `src/LineIndex.cpp` | Logical line starts for editable documents |
@@ -16,6 +23,13 @@ behavior remain explicit.
 | Text format helpers | `src/TextFormat.h`, `src/TextFormat.cpp` | Encoding labels, line-ending detection, normalization, and save encoding |
 | Resources/manifest | `src/NativePad.rc`, `src/resource.h`, `src/app.manifest` | Version metadata, command IDs, visual styles, DPI awareness |
 | Tests | `tests/*.cpp` | Dependency-free executable tests |
+
+The application shell is split into focused translation units rather than one
+large `main.cpp`. Each dialog and feature area lives in its own file and exposes
+a minimal header (for example, `ShowFontDialog`, `ShowGoToLineDialog`,
+`StartPrintWorker`). Cross-cutting Win32 helpers — theming, DPI scaling, and
+control styling — are shared through `UiSupport`. `main.cpp` retains only
+`AppWindow`, `wWinMain`, and shell-only helpers.
 
 ## UI Ownership
 

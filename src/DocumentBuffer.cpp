@@ -1,6 +1,7 @@
 #include "DocumentBuffer.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <stdexcept>
 
 namespace NativePad {
@@ -18,6 +19,7 @@ void DocumentBuffer::Reset(std::wstring text) {
     add_.clear();
     pieces_.clear();
     length_ = original_.size();
+    cacheValid_ = false;
 
     if (!original_.empty()) {
         pieces_.push_back({Source::Original, 0, original_.size()});
@@ -165,10 +167,35 @@ DocumentBuffer::PiecePosition DocumentBuffer::Locate(std::size_t position) const
         throw std::out_of_range("position is outside the document");
     }
 
+    // The end-of-document position never maps to a piece; callers (InsertPiece)
+    // treat the returned end index as "append". Short-circuit it so appending at
+    // the end stays O(1).
+    if (position == length_) {
+        return {pieces_.size(), 0};
+    }
+
+    // Fast path for sequential access: resume scanning from the cached piece when
+    // the requested position is at or after its start.
+    if (cacheValid_ && cacheIndex_ < pieces_.size() && position >= cachePieceStart_) {
+        std::size_t cursor = cachePieceStart_;
+        for (std::size_t i = cacheIndex_; i < pieces_.size(); ++i) {
+            const std::size_t length = pieces_[i].length;
+            if (position < cursor + length) {
+                cacheIndex_ = i;
+                cachePieceStart_ = cursor;
+                return {i, position - cursor};
+            }
+            cursor += length;
+        }
+    }
+
     std::size_t cursor = 0;
     for (std::size_t i = 0; i < pieces_.size(); ++i) {
         const Piece& piece = pieces_[i];
         if (position < cursor + piece.length) {
+            cacheIndex_ = i;
+            cachePieceStart_ = cursor;
+            cacheValid_ = true;
             return {i, position - cursor};
         }
 
@@ -176,6 +203,47 @@ DocumentBuffer::PiecePosition DocumentBuffer::Locate(std::size_t position) const
     }
 
     return {pieces_.size(), 0};
+}
+
+std::optional<std::size_t> DocumentBuffer::Find(std::wstring_view needle, std::size_t start, bool forward, bool matchCase) const {
+    if (needle.empty() || needle.size() > length_) {
+        return std::nullopt;
+    }
+
+    const std::size_t lastStart = length_ - needle.size();
+
+    auto matchesAt = [&](std::size_t position) {
+        for (std::size_t i = 0; i < needle.size(); ++i) {
+            wchar_t left = CharAt(position + i);
+            wchar_t right = needle[i];
+            if (!matchCase) {
+                left = static_cast<wchar_t>(std::towlower(left));
+                right = static_cast<wchar_t>(std::towlower(right));
+            }
+            if (left != right) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (forward) {
+        for (std::size_t position = std::min(start, lastStart + 1); position <= lastStart; ++position) {
+            if (matchesAt(position)) {
+                return position;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::size_t position = std::min(start, lastStart + 1);
+    while (position > 0) {
+        --position;
+        if (matchesAt(position)) {
+            return position;
+        }
+    }
+    return std::nullopt;
 }
 
 void DocumentBuffer::InsertPiece(std::size_t position, Piece newPiece) {
@@ -207,6 +275,9 @@ void DocumentBuffer::InsertPiece(std::size_t position, Piece newPiece) {
 }
 
 void DocumentBuffer::NormalizePieces() {
+    // Piece indices and offsets change here, so the Locate cache is stale.
+    cacheValid_ = false;
+
     // Keep the table small: delete zero-length pieces and merge adjacent spans
     // that refer to contiguous text in the same backing string.
     pieces_.erase(

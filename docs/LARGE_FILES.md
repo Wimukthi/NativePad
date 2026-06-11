@@ -4,7 +4,7 @@ NativePad has separate paths for normal editable files and oversized files.
 
 ## Editable Limit
 
-`kReadChunkLimit` in `src/main.cpp` is currently:
+`kReadChunkLimit` in `src/FileCodec.h` is currently:
 
 ```text
 512 MB
@@ -61,7 +61,7 @@ Allowed commands include:
 - Copy.
 - Find.
 - Find Next/Previous.
-- Go To when Word Wrap is off.
+- Go To, including while Word Wrap is on.
 
 ## Encoding and Coordinates
 
