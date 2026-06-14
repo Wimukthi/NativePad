@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "resource.h"
+#include "UpdateChecker.h"
 #include "UiSupport.h"
 
 namespace NativePad {
@@ -89,6 +91,8 @@ struct AboutDialogState {
     HWND title{};
     HWND description{};
     std::array<HWND, 4> metadataLabels{};
+    HWND updateButton{};
+    HWND autoUpdate{};
     HWND ok{};
     HINSTANCE instance{};
     HFONT uiFont{};
@@ -98,7 +102,7 @@ struct AboutDialogState {
     bool dark{false};
 };
 
-std::array<HWND, 7> AboutDialogControls(AboutDialogState* state) {
+std::array<HWND, 9> AboutDialogControls(AboutDialogState* state) {
     if (state == nullptr) {
         return {};
     }
@@ -110,6 +114,8 @@ std::array<HWND, 7> AboutDialogControls(AboutDialogState* state) {
         state->metadataLabels[1],
         state->metadataLabels[2],
         state->metadataLabels[3],
+        state->updateButton,
+        state->autoUpdate,
         state->ok,
     };
 }
@@ -141,9 +147,11 @@ void LayoutAboutDialog(AboutDialogState* state) {
     const int metadataTop = margin + ScaleForDpi(102, state->dpi);
     const int metadataHeight = ScaleForDpi(22, state->dpi);
     const int buttonWidth = ScaleForDpi(92, state->dpi);
+    const int updateButtonWidth = ScaleForDpi(138, state->dpi);
     const int buttonHeight = ScaleForDpi(30, state->dpi);
+    const int buttonGap = ScaleForDpi(12, state->dpi);
     const int contentWidth = client.right - client.left - titleLeft - margin;
-    const int buttonTop = client.bottom - margin - buttonHeight;
+    const int buttonTop = client.bottom - margin - buttonHeight - ScaleForDpi(8, state->dpi);
 
     MoveWindow(state->icon, margin, margin + ScaleForDpi(2, state->dpi), iconSize, iconSize, TRUE);
     MoveWindow(state->title, titleLeft, margin, contentWidth, titleHeight, TRUE);
@@ -159,6 +167,8 @@ void LayoutAboutDialog(AboutDialogState* state) {
             TRUE);
     }
 
+    MoveWindow(state->autoUpdate, margin, buttonTop + ScaleForDpi(4, state->dpi), ScaleForDpi(190, state->dpi), ScaleForDpi(22, state->dpi), TRUE);
+    MoveWindow(state->updateButton, client.right - margin - buttonWidth - buttonGap - updateButtonWidth, buttonTop, updateButtonWidth, buttonHeight, TRUE);
     MoveWindow(state->ok, client.right - margin - buttonWidth, buttonTop, buttonWidth, buttonHeight, TRUE);
     InvalidateRect(state->hwnd, nullptr, TRUE);
 }
@@ -276,6 +286,35 @@ LRESULT CALLBACK AboutDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 nullptr);
         }
 
+        state->autoUpdate = CreateWindowExW(
+            0,
+            L"BUTTON",
+            L"Check automatically",
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_AUTOCHECKBOX,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            reinterpret_cast<HMENU>(ID_HELP_AUTO_UPDATE),
+            nullptr,
+            nullptr);
+        SendMessageW(state->autoUpdate, BM_SETCHECK, AutomaticUpdateChecksEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
+
+        state->updateButton = CreateWindowExW(
+            0,
+            L"BUTTON",
+            L"Check for Updates...",
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_PUSHBUTTON,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            reinterpret_cast<HMENU>(ID_HELP_CHECK_UPDATES),
+            nullptr,
+            nullptr);
+
         state->ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
 
         for (HWND control : AboutDialogControls(state)) {
@@ -295,6 +334,15 @@ LRESULT CALLBACK AboutDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         PaintAboutDialog(state);
         return 0;
     case WM_COMMAND:
+        if (LOWORD(wParam) == ID_HELP_AUTO_UPDATE) {
+            SetAutomaticUpdateChecksEnabled(SendMessageW(state->autoUpdate, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            return 0;
+        }
+        if (LOWORD(wParam) == ID_HELP_CHECK_UPDATES) {
+            PostMessageW(state->owner, WM_COMMAND, ID_HELP_CHECK_UPDATES, 0);
+            DestroyWindow(hwnd);
+            return 0;
+        }
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
             DestroyWindow(hwnd);
             return 0;
@@ -354,7 +402,7 @@ void ShowAboutDialog(HWND owner, HINSTANCE instance, UINT dpi, bool dark) {
     GetWindowRect(owner, &ownerRect);
     const int effectiveDpi = static_cast<int>(dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi);
     const int width = ScaleForDpi(500, static_cast<UINT>(effectiveDpi));
-    const int height = ScaleForDpi(264, static_cast<UINT>(effectiveDpi));
+    const int height = ScaleForDpi(324, static_cast<UINT>(effectiveDpi));
     const int x = ownerRect.left + ((ownerRect.right - ownerRect.left - width) / 2);
     const int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top - height) / 2);
 

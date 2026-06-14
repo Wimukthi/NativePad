@@ -24,7 +24,7 @@ Replace, Go To, About) is implemented in its own `src/*Dialog.*` module.
 ## Dark Mode
 
 NativePad starts from the system app theme. The View menu can force dark/light,
-and that override is persisted under `HKCU\Software\NativePad`.
+and that override is persisted under `%LOCALAPPDATA%\NativePad\NativePad.ini`.
 
 Dark-mode implementation uses:
 
@@ -57,6 +57,8 @@ NativePad currently has custom dialogs for:
 
 They use normal child controls where possible, with custom parent-painted
 backgrounds and borders.
+The About dialog also exposes update checking controls; those controls reuse the
+same button and checkbox theming as the rest of the custom dialogs.
 Dialogs rely on the native DWM frame and shadow. Avoid adding separate shadow
 helper windows around dialogs because they do not match the DWM-rounded frame
 and can read as extra window chrome.
@@ -81,6 +83,9 @@ while preserving the same active-window behavior as standard Win32 menus.
 When a popup has mouse capture, outside right-clicks are re-resolved against the
 main window and reposted as `WM_CONTEXTMENU` so the editor context menu can open
 without leaving the top-level menu stuck open.
+The menu strip also emulates standard keyboard cues: Alt/F10 reveals top-level
+mnemonic underlines and moves focus into menu navigation until Esc or a menu
+command exits that mode.
 
 ## Editor Surface
 

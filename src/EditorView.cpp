@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <cwctype>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -42,6 +43,19 @@ bool IsShiftDown() {
 
 bool IsControlDown() {
     return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+}
+
+bool IsTopLevelMenuMnemonic(WPARAM key) noexcept {
+    switch (static_cast<wchar_t>(std::towupper(static_cast<wint_t>(key)))) {
+    case L'F':
+    case L'E':
+    case L'O':
+    case L'V':
+    case L'H':
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool IsLineBreak(wchar_t value) noexcept {
@@ -353,8 +367,14 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         Paint();
         ValidateRect(hwnd, nullptr);
         return 0;
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        HBRUSH background = CreateSolidBrush(theme_.background);
+        FillRect(reinterpret_cast<HDC>(wParam), &client, background);
+        DeleteObject(background);
         return 1;
+    }
     case WM_SETFOCUS:
         StartCaretBlink();
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -380,10 +400,26 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             return TRUE;
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
+    case WM_SYSKEYDOWN:
+        if (parent_ != nullptr && (wParam == VK_MENU || wParam == VK_F10 || IsTopLevelMenuMnemonic(wParam))) {
+            SendMessageW(parent_, message, wParam, lParam);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    case WM_SYSKEYUP:
+        if (parent_ != nullptr && wParam == VK_MENU) {
+            SendMessageW(parent_, message, wParam, lParam);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_CHAR:
         OnCharacter(static_cast<wchar_t>(wParam));
         return 0;
     case WM_KEYDOWN:
+        if (parent_ != nullptr && wParam == VK_F10) {
+            SendMessageW(parent_, message, wParam, lParam);
+            return 0;
+        }
         OnKeyDown(wParam);
         return 0;
     case WM_LBUTTONDOWN:
@@ -496,6 +532,7 @@ void EditorView::Paint() {
     const float height = ClientHeightDips();
     const float textLeft = TextLeftDips();
     const float gutterWidth = LineNumberGutterWidthDips();
+    const D2D1_RECT_F textClip = D2D1::RectF(textLeft, 0.0f, width, height);
 
     impl_->target->BeginDraw();
     impl_->target->Clear(ToD2DColor(theme_.background));
@@ -518,6 +555,33 @@ void EditorView::Paint() {
             1.0f);
     }
 
+    const bool hasTextClip = textClip.left < textClip.right && textClip.top < textClip.bottom;
+
+    if (showLineNumbers_ && impl_->lineNumberFormat && impl_->lineNumberBrush) {
+        for (std::size_t row = firstRow; row < lastRow; ++row) {
+            const VisualRow visual = wordWrap_ ? VisualRowFromIndex(row) : VisualRow{row, 0, LineLength(row)};
+            if (wordWrap_ && visual.columnStart != 0) {
+                continue;
+            }
+
+            const float y = topPadding + (static_cast<float>(row - firstRow) * lineHeight_);
+            const std::wstring lineNumber = std::to_wstring(visual.line + 1);
+            impl_->target->DrawTextW(
+                lineNumber.c_str(),
+                static_cast<UINT32>(lineNumber.size()),
+                impl_->lineNumberFormat.Get(),
+                D2D1::RectF(0.0f, y, std::max(0.0f, gutterWidth - static_cast<float>(kLineNumberTextGap)), y + lineHeight_),
+                impl_->lineNumberBrush.Get(),
+                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+    }
+
+    // Text, selection, and the caret are clipped separately from the gutter so
+    // horizontally scrolled long lines cannot paint back under line numbers.
+    if (hasTextClip) {
+        impl_->target->PushAxisAlignedClip(textClip, D2D1_ANTIALIAS_MODE_ALIASED);
+    }
+
     for (std::size_t row = firstRow; row < lastRow; ++row) {
         const VisualRow visual = wordWrap_ ? VisualRowFromIndex(row) : VisualRow{row, 0, LineLength(row)};
         const float y = topPadding + (static_cast<float>(row - firstRow) * lineHeight_);
@@ -528,18 +592,7 @@ void EditorView::Paint() {
                                            ? std::min(lineStart + visual.columnStart + wrapColumns, lineEnd)
                                            : lineEnd;
 
-        if (showLineNumbers_ && (!wordWrap_ || visual.columnStart == 0) && impl_->lineNumberFormat && impl_->lineNumberBrush) {
-            const std::wstring lineNumber = std::to_wstring(visual.line + 1);
-            impl_->target->DrawTextW(
-                lineNumber.c_str(),
-                static_cast<UINT32>(lineNumber.size()),
-                impl_->lineNumberFormat.Get(),
-                D2D1::RectF(0.0f, y, std::max(0.0f, gutterWidth - static_cast<float>(kLineNumberTextGap)), y + lineHeight_),
-                impl_->lineNumberBrush.Get(),
-                D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        }
-
-        if (selectionStart != selectionEnd) {
+        if (hasTextClip && selectionStart != selectionEnd) {
             const std::size_t selectedStart = std::max(selectionStart, segmentStart);
             const std::size_t selectedEnd = std::min(selectionEnd, segmentEnd);
             if (selectedStart < selectedEnd) {
@@ -550,7 +603,7 @@ void EditorView::Paint() {
         }
 
         const std::wstring text = DocumentTextRange(segmentStart, segmentEnd - segmentStart);
-        if (!text.empty()) {
+        if (hasTextClip && !text.empty()) {
             impl_->target->DrawTextW(
                 text.c_str(),
                 static_cast<UINT32>(text.size()),
@@ -561,7 +614,7 @@ void EditorView::Paint() {
         }
     }
 
-    if (GetFocus() == hwnd_ && caretVisible_) {
+    if (hasTextClip && GetFocus() == hwnd_ && caretVisible_) {
         const std::size_t caretRow = wordWrap_ ? VisualRowIndexForPosition(caret_) : LineFromPosition(caret_);
         if (caretRow >= firstRow && caretRow < lastRow) {
             const VisualRow visual = wordWrap_ ? VisualRowFromIndex(caretRow) : VisualRow{caretRow, 0, LineLength(caretRow)};
@@ -572,9 +625,14 @@ void EditorView::Paint() {
         }
     }
 
+    if (hasTextClip) {
+        impl_->target->PopAxisAlignedClip();
+    }
+
     const HRESULT hr = impl_->target->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
         DiscardDeviceResources();
+        InvalidateRect(hwnd_, nullptr, TRUE);
     }
 }
 
@@ -586,6 +644,13 @@ void EditorView::DiscardDeviceResources() {
     impl_->lineNumberBrush.Reset();
     impl_->lineNumberBackgroundBrush.Reset();
     impl_->lineNumberSeparatorBrush.Reset();
+}
+
+void EditorView::ResetDeviceResources() {
+    // Sleep/resume and display-driver changes can leave an HWND render target
+    // with stale back-buffer contents until a full recreate is forced.
+    DiscardDeviceResources();
+    InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 bool EditorView::EnsureDeviceResources() {

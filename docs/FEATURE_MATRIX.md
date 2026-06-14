@@ -46,6 +46,7 @@ This table describes the current implementation state, not the final target.
 | --- | --- | --- |
 | About | Done | Custom dark-aware dialog with version, build, author, and licence |
 | Set as Default Editor | Done | Registers NativePad per-user as a `.txt` handler, then opens Windows "Default apps" to confirm; Windows requires the user to confirm the default. Help menu shows a check when NativePad is the current default |
+| Check for Updates | Done | About dialog command plus optional automatic startup checks; downloads and verifies the Inno installer before launch |
 
 ## Text and File Behavior
 
@@ -56,7 +57,7 @@ This table describes the current implementation state, not the final target.
 | ANSI fallback load | Done | Used when UTF-8 decode fails |
 | Save encoding | Done | Preserves UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI where representable; Save As can change encoding |
 | Line-ending preservation | Done | CRLF/LF/CR files normalize back to detected style; mixed files are left mixed |
-| Preferences | Done | Persists dark override, word wrap, line numbers, status bar, font, window placement, and page margins |
+| Preferences | Done | INI-backed persistence for dark override, word wrap, line numbers, status bar, font, window placement, page margins, update URL, and update-check preference |
 | Large-file viewing | Done | Read-only mapped backend above editable limit |
 | Large-file editing | Not done | Requires new storage model |
 

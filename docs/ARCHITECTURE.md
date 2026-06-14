@@ -14,8 +14,9 @@ behavior remain explicit.
 | File codec | `src/FileCodec.h`, `src/FileCodec.cpp` | Encoding detection, file read/write, large-file preview, and open/save pickers |
 | Printing | `src/Printing.h`, `src/Printing.cpp` | Threaded pagination/spooling worker |
 | Dialogs | `src/FontDialog.*`, `src/FindReplaceDialog.*`, `src/GoToDialog.*`, `src/AboutDialog.*` | Custom dark-mode modal/modeless dialogs, each exposing a single entry point |
-| Settings | `src/Settings.h`, `src/Settings.cpp` | Registry preference read/write under `HKCU\Software\NativePad` |
+| Settings | `src/Settings.h`, `src/Settings.cpp` | INI preference read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini`, with one-time migration from legacy registry values |
 | Default editor | `src/DefaultEditor.h`, `src/DefaultEditor.cpp` | Per-user file-association registration for `.txt` and the Windows "Default apps" hand-off |
+| Update checker | `src/UpdateChecker.h`, `src/UpdateChecker.cpp` | GitHub release discovery, installer download, SHA-256 verification, and update-check preferences |
 | Editor control | `src/EditorView.h`, `src/EditorView.cpp` | DirectWrite rendering, caret/selection, scrolling, input, clipboard, undo/redo |
 | Editable document | `src/DocumentBuffer.h`, `src/DocumentBuffer.cpp` | Piece-table storage for normal editable files |
 | Line index | `src/LineIndex.h`, `src/LineIndex.cpp` | Logical line starts for editable documents |
@@ -41,7 +42,7 @@ control styling — are shared through `UiSupport`. `main.cpp` retains only
 - Dialog creation.
 - File/open/save/print commands.
 - Dirty state and document metadata.
-- Preference load/save under `HKCU\Software\NativePad`.
+- Preference load/save under `%LOCALAPPDATA%\NativePad\NativePad.ini`.
 
 `EditorView` owns:
 
@@ -111,10 +112,31 @@ Word wrap uses a lazy visual-row prefix cache:
 
 ## Threading
 
-Most application work stays on the UI thread. Printing is the current exception:
+Most application work stays on the UI thread. Printing and update checks are the
+current exceptions:
 
 - The native Print dialog runs on the UI thread.
 - After the printer DC is returned, pagination/spooling runs on a worker thread.
 - Completion is posted back with `WM_NATIVEPAD_PRINT_COMPLETE`.
+- Update checks and installer downloads run on worker threads through WinHTTP.
+- Update completion is posted back with `WM_NATIVEPAD_UPDATE_CHECK_COMPLETE` and
+  `WM_NATIVEPAD_UPDATE_DOWNLOAD_COMPLETE`.
 
 Do not access HWND-owned UI state from worker threads.
+
+## Update Flow
+
+The update checker reads the latest GitHub release, compares the release tag to
+the executable file version, finds the `NativePadSetup-*-win-x64.exe` asset, and
+downloads it to `%LOCALAPPDATA%\NativePad\Updates`.
+
+Downloaded installers are verified against the GitHub release asset SHA-256
+digest when the digest is present. The UI thread owns all prompts and launches
+the installer elevated with `ShellExecuteW("runas")` only after dirty document
+state has been handled.
+
+Automatic checks are off by default and are controlled by the `CheckForUpdates`
+setting in `%LOCALAPPDATA%\NativePad\NativePad.ini`. When enabled, startup
+checks are rate-limited by `LastUpdateCheckUtc`. The feed endpoint is also
+stored in the INI as `UpdateUrl` and defaults to
+`https://api.github.com/repos/Wimukthi/NativePad/releases/latest`.

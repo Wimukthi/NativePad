@@ -56,6 +56,7 @@ public:
     [[nodiscard]] bool ShowLineNumbers() const noexcept;
     void SetReadOnly(bool readOnly) noexcept;
     void OnDpiChanged(UINT dpi);
+    void ResetDeviceResources();
 
     void Undo();
     void Redo();

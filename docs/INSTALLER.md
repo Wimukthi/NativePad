@@ -2,6 +2,9 @@
 
 NativePad uses Inno Setup 6 for the Windows installer.
 
+The installer uses Inno Setup's dynamic modern wizard style, so Setup and
+Uninstall follow the user's Windows light/dark app mode.
+
 ## Local Requirements
 
 - Release x64 build tools from Visual Studio.
@@ -48,6 +51,21 @@ The installer writes:
 
 It also creates a Start Menu shortcut, offers an optional desktop shortcut, and
 registers `NativePad.exe` under Windows App Paths.
+
+## Update, Reinstall, and Remove
+
+The installer keeps a stable Inno Setup `AppId`, so later packages update the
+same installation in place and reuse the previous installation directory.
+
+When Setup detects an existing NativePad install, it shows a maintenance choice:
+
+- Update from an older installed version to the package version.
+- Repair/reinstall when the installed version matches the package version.
+- Refuse to install over a newer installed version.
+- Remove NativePad by launching the existing uninstaller.
+
+Setup uses Windows Restart Manager through `CloseApplications=yes` so in-use
+NativePad binaries can be closed before files are replaced.
 
 ## File Associations
 

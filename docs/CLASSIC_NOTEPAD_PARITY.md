@@ -95,8 +95,9 @@ Goal: keep user choices between launches without adding unnecessary UI.
 - Persist dark mode override, word wrap, line numbers, status bar visibility,
   window placement, and font.
 - Let system dark mode remain the default when no explicit NativePad preference exists.
-- Keep settings in a simple per-user file or registry location with versioned schema.
-- Current implementation stores preferences under `HKCU\Software\NativePad`.
+- Keep settings in a simple per-user file with versioned schema.
+- Current implementation stores preferences under
+  `%LOCALAPPDATA%\NativePad\NativePad.ini`.
 
 Acceptance:
 

@@ -5,4 +5,5 @@ obj/
 *.suo
 *.aps
 *-smoke.png
+NativePad-*-win-x64.zip
 installer/output/

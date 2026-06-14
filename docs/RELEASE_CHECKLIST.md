@@ -54,6 +54,8 @@ dialogs, printing, DPI changes, and real-world file handling.
 - Line Numbers toggle and persist.
 - Status Bar toggle persists and shows line, column, total lines, encoding, and
   character count.
+- With line numbers enabled and Word Wrap disabled, long pasted lines do not
+  paint into the gutter while horizontally scrolled.
 
 ## Dark Mode and DPI
 
@@ -61,9 +63,24 @@ dialogs, printing, DPI changes, and real-world file handling.
 - View > Dark Mode override persists.
 - Main menus, editor context menu, status bar, custom dialogs, and scrollbars are
   usable in dark mode.
+- Alt/F10 reveals top-level menu mnemonic underlines, and Esc returns focus to
+  the editor.
 - Popup menu borders and shadows are subtle and do not steal active-window focus.
 - Moving between 100%, 125%, 150%, and 200% DPI monitors keeps text, menus,
   dialogs, and scrollbars correctly sized.
+- Startup and wake-from-sleep repaint directly to the active theme without a
+  white editor surface persisting.
+
+## Updates
+
+- Help does not show update-specific menu items.
+- About dialog Check for Updates reports the current version when no newer
+  release is available.
+- About dialog Check automatically checkbox toggles the persisted setting.
+- Update settings are written to `%LOCALAPPDATA%\NativePad\NativePad.ini`,
+  including `UpdateUrl`, `CheckForUpdates`, and `LastUpdateCheckUtc`.
+- A downloaded installer is stored under `%LOCALAPPDATA%\NativePad\Updates`.
+- Dirty documents prompt before the downloaded installer is launched.
 
 ## Large Files
 
@@ -92,5 +109,11 @@ dialogs, printing, DPI changes, and real-world file handling.
 - Download and inspect the Inno Setup installer artifact.
 - Install NativePad from the installer, launch it from the Start Menu shortcut,
   then uninstall it from Windows Settings.
+- Confirm Setup and Uninstall follow Windows light/dark app mode.
+- Run the installer over an older version and confirm the update option is
+  shown.
+- Run the installer over the same version and confirm the repair/reinstall
+  option is shown.
+- Confirm the installer maintenance page can launch the existing uninstaller.
 - Keep unsigned ZIP and installer releases clearly labeled until code signing is
   added.

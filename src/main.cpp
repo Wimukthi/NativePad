@@ -39,6 +39,7 @@
 #include "resource.h"
 #include "Settings.h"
 #include "TextFormat.h"
+#include "UpdateChecker.h"
 #include "UiSupport.h"
 
 // Defined after the Windows headers so the fallbacks never rewrite the
@@ -179,7 +180,7 @@ public:
         wc.hInstance = instance_;
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         AssignWindowClassIcons(wc, instance_);
-        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.hbrBackground = nullptr;
         wc.lpszClassName = kWindowClass;
 
         if (RegisterClassExW(&wc) == 0) {
@@ -326,38 +327,31 @@ private:
     }
 
     void SavePreferences() const {
-        HKEY key = nullptr;
-        if (!CreateSettingsKey(key)) {
-            return;
-        }
-
-        WriteSettingsDword(key, L"DarkModeForced", darkModeForced_ ? 1u : 0u);
-        WriteSettingsDword(key, L"DarkMode", darkMode_ ? 1u : 0u);
-        WriteSettingsDword(key, L"WordWrap", editorView_.WordWrap() ? 1u : 0u);
-        WriteSettingsDword(key, L"LineNumbers", editorView_.ShowLineNumbers() ? 1u : 0u);
-        WriteSettingsDword(key, L"StatusBarVisible", statusBarVisible_ ? 1u : 0u);
-        WriteSettingsInt(key, L"MarginLeft", pageMarginsThousandths_.left);
-        WriteSettingsInt(key, L"MarginTop", pageMarginsThousandths_.top);
-        WriteSettingsInt(key, L"MarginRight", pageMarginsThousandths_.right);
-        WriteSettingsInt(key, L"MarginBottom", pageMarginsThousandths_.bottom);
+        WriteSettingsDword(L"DarkModeForced", darkModeForced_ ? 1u : 0u);
+        WriteSettingsDword(L"DarkMode", darkMode_ ? 1u : 0u);
+        WriteSettingsDword(L"WordWrap", editorView_.WordWrap() ? 1u : 0u);
+        WriteSettingsDword(L"LineNumbers", editorView_.ShowLineNumbers() ? 1u : 0u);
+        WriteSettingsDword(L"StatusBarVisible", statusBarVisible_ ? 1u : 0u);
+        WriteSettingsInt(L"MarginLeft", pageMarginsThousandths_.left);
+        WriteSettingsInt(L"MarginTop", pageMarginsThousandths_.top);
+        WriteSettingsInt(L"MarginRight", pageMarginsThousandths_.right);
+        WriteSettingsInt(L"MarginBottom", pageMarginsThousandths_.bottom);
 
         const NativePad::EditorFontSpec& font = editorView_.Font();
-        WriteSettingsString(key, L"FontFamily", font.family);
-        WriteSettingsDword(key, L"FontSizeTenths", static_cast<DWORD>(std::lround(font.sizeDips * 10.0f)));
-        WriteSettingsDword(key, L"FontWeight", static_cast<DWORD>(font.weight));
-        WriteSettingsDword(key, L"FontItalic", font.italic ? 1u : 0u);
+        WriteSettingsString(L"FontFamily", font.family);
+        WriteSettingsDword(L"FontSizeTenths", static_cast<DWORD>(std::lround(font.sizeDips * 10.0f)));
+        WriteSettingsDword(L"FontWeight", static_cast<DWORD>(font.weight));
+        WriteSettingsDword(L"FontItalic", font.italic ? 1u : 0u);
 
         WINDOWPLACEMENT placement{};
         placement.length = sizeof(placement);
         if (GetWindowPlacement(hwnd_, &placement)) {
-            WriteSettingsInt(key, L"WindowLeft", placement.rcNormalPosition.left);
-            WriteSettingsInt(key, L"WindowTop", placement.rcNormalPosition.top);
-            WriteSettingsInt(key, L"WindowRight", placement.rcNormalPosition.right);
-            WriteSettingsInt(key, L"WindowBottom", placement.rcNormalPosition.bottom);
-            WriteSettingsDword(key, L"WindowMaximized", placement.showCmd == SW_SHOWMAXIMIZED ? 1u : 0u);
+            WriteSettingsInt(L"WindowLeft", placement.rcNormalPosition.left);
+            WriteSettingsInt(L"WindowTop", placement.rcNormalPosition.top);
+            WriteSettingsInt(L"WindowRight", placement.rcNormalPosition.right);
+            WriteSettingsInt(L"WindowBottom", placement.rcNormalPosition.bottom);
+            WriteSettingsDword(L"WindowMaximized", placement.showCmd == SW_SHOWMAXIMIZED ? 1u : 0u);
         }
-
-        RegCloseKey(key);
     }
 
     bool RegisterChildClasses() const {
@@ -446,6 +440,12 @@ private:
         case WM_NATIVEPAD_FIND_REPLACE:
             OnFindReplaceRequest(reinterpret_cast<FindReplaceDialogRequest*>(lParam));
             return 0;
+        case WM_NATIVEPAD_UPDATE_CHECK_COMPLETE:
+            OnUpdateCheckComplete(reinterpret_cast<UpdateCheckResult*>(lParam));
+            return 0;
+        case WM_NATIVEPAD_UPDATE_DOWNLOAD_COMPLETE:
+            OnUpdateDownloadComplete(reinterpret_cast<UpdateDownloadResult*>(lParam));
+            return 0;
         case WM_COMMAND:
             OnCommand(LOWORD(wParam), HIWORD(wParam), reinterpret_cast<HWND>(lParam));
             return 0;
@@ -458,11 +458,32 @@ private:
             return OnMeasureItem(reinterpret_cast<MEASUREITEMSTRUCT*>(lParam));
         case WM_DRAWITEM:
             return OnDrawItem(reinterpret_cast<DRAWITEMSTRUCT*>(lParam));
-        case WM_SYSKEYDOWN:
-            if (OpenMenuFromKey(wParam)) {
+        case WM_KEYDOWN:
+            if (HandleMenuKeyDown(wParam)) {
                 return 0;
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
+        case WM_SYSKEYDOWN:
+            if (HandleMenuSysKeyDown(wParam)) {
+                return 0;
+            }
+            return DefWindowProcW(hwnd_, message, wParam, lParam);
+        case WM_SYSKEYUP:
+            if (HandleMenuSysKeyUp(wParam)) {
+                return 0;
+            }
+            return DefWindowProcW(hwnd_, message, wParam, lParam);
+        case WM_ERASEBKGND:
+            EraseClientBackground(reinterpret_cast<HDC>(wParam));
+            return 1;
+        case WM_POWERBROADCAST:
+            if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND) {
+                RefreshAfterDisplaySurfaceChange();
+            }
+            return TRUE;
+        case WM_DISPLAYCHANGE:
+            RefreshAfterDisplaySurfaceChange();
+            return 0;
         case WM_SETCURSOR:
             if (LOWORD(lParam) == HTCLIENT) {
                 const HWND target = reinterpret_cast<HWND>(wParam);
@@ -563,6 +584,7 @@ private:
         UpdateStatus();
         Layout();
         SetFocus(editor_);
+        MaybeStartAutomaticUpdateCheck();
 
         return 0;
     }
@@ -622,11 +644,11 @@ private:
         AppendMenuCommand(helpMenu_, ID_HELP_ABOUT);
 
         menuEntries_ = {{
-            {L"File", fileMenu_, {}},
-            {L"Edit", editMenu_, {}},
-            {L"Format", formatMenu_, {}},
-            {L"View", viewMenu_, {}},
-            {L"Help", helpMenu_, {}},
+            {L"&File", fileMenu_, {}},
+            {L"&Edit", editMenu_, {}},
+            {L"F&ormat", formatMenu_, {}},
+            {L"&View", viewMenu_, {}},
+            {L"&Help", helpMenu_, {}},
         }};
     }
 
@@ -720,6 +742,12 @@ private:
             break;
         case ID_HELP_DEFAULT_EDITOR:
             SetAsDefaultEditor();
+            break;
+        case ID_HELP_CHECK_UPDATES:
+            BeginUpdateCheck(UpdateCheckKind::Manual);
+            break;
+        case ID_HELP_AUTO_UPDATE:
+            ToggleAutomaticUpdateChecks();
             break;
         case ID_HELP_ABOUT:
             ShowAboutDialog(hwnd_, instance_, dpi_, darkMode_);
@@ -1014,6 +1042,126 @@ private:
         }
     }
 
+    void ToggleAutomaticUpdateChecks() {
+        const bool enabled = !AutomaticUpdateChecksEnabled();
+        SetAutomaticUpdateChecksEnabled(enabled);
+        InvalidateRect(menuStrip_, nullptr, FALSE);
+        if (enabled) {
+            BeginUpdateCheck(UpdateCheckKind::Manual);
+        }
+    }
+
+    void MaybeStartAutomaticUpdateCheck() {
+        if (AutomaticUpdateCheckDue()) {
+            BeginUpdateCheck(UpdateCheckKind::Automatic);
+        }
+    }
+
+    void BeginUpdateCheck(UpdateCheckKind kind) {
+        if (updateCheckInProgress_) {
+            if (kind == UpdateCheckKind::Manual) {
+                MessageBoxW(hwnd_, L"An update check is already running.", L"NativePad", MB_ICONINFORMATION | MB_OK);
+            }
+            return;
+        }
+
+        updateCheckInProgress_ = true;
+        if (kind == UpdateCheckKind::Manual) {
+            SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+        }
+        StartUpdateCheck(hwnd_, instance_, kind);
+    }
+
+    void BeginUpdateDownload(const UpdateInfo& update) {
+        if (updateDownloadInProgress_) {
+            MessageBoxW(hwnd_, L"An update download is already running.", L"NativePad", MB_ICONINFORMATION | MB_OK);
+            return;
+        }
+
+        updateDownloadInProgress_ = true;
+        MessageBoxW(hwnd_, L"NativePad will download the installer in the background.", L"NativePad", MB_ICONINFORMATION | MB_OK);
+        StartUpdateDownload(hwnd_, update);
+    }
+
+    void OnUpdateCheckComplete(UpdateCheckResult* rawResult) {
+        std::unique_ptr<UpdateCheckResult> result(rawResult);
+        updateCheckInProgress_ = false;
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        if (!result) {
+            return;
+        }
+
+        const bool manual = result->kind == UpdateCheckKind::Manual;
+        if (!result->success) {
+            if (manual) {
+                std::wstring message = L"Could not check for updates:\n\n" + result->message;
+                MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            }
+            return;
+        }
+
+        if (!result->updateAvailable) {
+            if (manual) {
+                const std::wstring message = L"NativePad is up to date.\n\nInstalled version: " + CurrentExecutableVersion(instance_);
+                MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONINFORMATION | MB_OK);
+            }
+            return;
+        }
+
+        std::wstring message = L"NativePad ";
+        message += result->update.version;
+        message += L" is available.\n\nDownload and install it now?";
+        if (MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1) == IDYES) {
+            BeginUpdateDownload(result->update);
+        }
+    }
+
+    void OnUpdateDownloadComplete(UpdateDownloadResult* rawResult) {
+        std::unique_ptr<UpdateDownloadResult> result(rawResult);
+        updateDownloadInProgress_ = false;
+        if (!result) {
+            return;
+        }
+
+        if (!result->success) {
+            std::wstring message = L"Could not download the NativePad update:\n\n" + result->message;
+            MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONERROR | MB_OK);
+            return;
+        }
+
+        std::wstring message = L"NativePad ";
+        message += result->update.version;
+        message += L" has been downloaded.\n\nSave any open work and run the installer now?";
+        if (MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1) != IDYES) {
+            return;
+        }
+
+        if (!ConfirmSaveIfDirty()) {
+            return;
+        }
+
+        LaunchDownloadedInstaller(result->installerPath);
+    }
+
+    void LaunchDownloadedInstaller(const std::wstring& installerPath) {
+        const auto launchResult = reinterpret_cast<INT_PTR>(ShellExecuteW(
+            hwnd_,
+            L"runas",
+            installerPath.c_str(),
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL));
+        if (launchResult <= 32) {
+            std::wstring message = L"Could not launch the installer:\n\n";
+            message += GetLastErrorText(static_cast<DWORD>(launchResult));
+            MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONERROR | MB_OK);
+            return;
+        }
+
+        SavePreferences();
+        DestroyWindow(hwnd_);
+    }
+
     void ToggleWordWrap() {
         editorView_.SetWordWrap(!editorView_.WordWrap());
         UpdateStatus();
@@ -1114,6 +1262,28 @@ private:
             return 0;
         case WM_ERASEBKGND:
             return 1;
+        case WM_GETDLGCODE:
+            return DLGC_WANTARROWS | DLGC_WANTCHARS;
+        case WM_KEYDOWN:
+            if (HandleMenuKeyDown(wParam)) {
+                return 0;
+            }
+            break;
+        case WM_SYSKEYDOWN:
+            if (HandleMenuSysKeyDown(wParam)) {
+                return 0;
+            }
+            break;
+        case WM_SYSKEYUP:
+            if (HandleMenuSysKeyUp(wParam)) {
+                return 0;
+            }
+            break;
+        case WM_KILLFOCUS:
+            if (activeMenu_ < 0) {
+                ExitMenuKeyboardMode(false);
+            }
+            return 0;
         case WM_MOUSEMOVE:
             OnMenuMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             return 0;
@@ -1128,6 +1298,8 @@ private:
         default:
             return DefWindowProcW(hwnd, message, wParam, lParam);
         }
+
+        return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
     HFONT UiFont() const {
@@ -1254,6 +1426,10 @@ private:
             return L"&Line Numbers";
         case ID_VIEW_DARK_MODE:
             return L"&Dark Mode";
+        case ID_HELP_CHECK_UPDATES:
+            return L"Check for &Updates...";
+        case ID_HELP_AUTO_UPDATE:
+            return L"Check &Automatically";
         case ID_HELP_DEFAULT_EDITOR:
             return L"Set as &Default Editor...";
         case ID_HELP_ABOUT:
@@ -1302,8 +1478,9 @@ private:
         const int height = MenuStripHeight();
 
         for (auto& entry : menuEntries_) {
+            const std::wstring label = StripMenuMnemonic(entry.text);
             SIZE size{};
-            GetTextExtentPoint32W(hdc, entry.text, static_cast<int>(wcslen(entry.text)), &size);
+            GetTextExtentPoint32W(hdc, label.c_str(), static_cast<int>(label.size()), &size);
             const int itemWidth = size.cx + horizontalPadding * 2;
             entry.rect = {left, 0, std::min(width, left + itemWidth), height};
             left += itemWidth;
@@ -1346,7 +1523,8 @@ private:
 
             RECT textRect = entry.rect;
             SetTextColor(hdc, colors.menuText);
-            DrawTextW(hdc, entry.text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            const UINT prefixFlag = menuKeyboardCuesVisible_ ? 0u : DT_HIDEPREFIX;
+            DrawTextW(hdc, entry.text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | prefixFlag);
         }
 
         HPEN borderPen = CreatePen(PS_SOLID, 1, colors.menuBorder);
@@ -1426,26 +1604,125 @@ private:
         }
     }
 
-    bool OpenMenuFromKey(WPARAM key) {
-        switch (key) {
-        case 'F':
-            ShowPopupMenu(0);
-            return true;
-        case 'E':
-            ShowPopupMenu(1);
-            return true;
-        case 'O':
-            ShowPopupMenu(2);
-            return true;
-        case 'V':
-            ShowPopupMenu(3);
-            return true;
-        case 'H':
-            ShowPopupMenu(4);
-            return true;
+    int MenuIndexForMnemonic(WPARAM key) const {
+        switch (static_cast<wchar_t>(std::towupper(static_cast<wint_t>(key)))) {
+        case L'F':
+            return 0;
+        case L'E':
+            return 1;
+        case L'O':
+            return 2;
+        case L'V':
+            return 3;
+        case L'H':
+            return 4;
         default:
+            return -1;
+        }
+    }
+
+    int CurrentKeyboardMenuIndex() const {
+        if (keyboardMenuIndex_ >= 0 && keyboardMenuIndex_ < static_cast<int>(menuEntries_.size())) {
+            return keyboardMenuIndex_;
+        }
+        return 0;
+    }
+
+    void SetKeyboardMenuIndex(int index) {
+        if (menuEntries_.empty()) {
+            return;
+        }
+
+        const int count = static_cast<int>(menuEntries_.size());
+        while (index < 0) {
+            index += count;
+        }
+        keyboardMenuIndex_ = index % count;
+        hotMenu_ = keyboardMenuIndex_;
+        InvalidateRect(menuStrip_, nullptr, FALSE);
+    }
+
+    void EnterMenuKeyboardMode(int index = 0) {
+        // Native menu bars reveal keyboard cues and take menu focus when Alt/F10
+        // is pressed. The custom strip mirrors that behavior explicitly because
+        // USER32 cannot do it for owner-painted top-level labels.
+        menuKeyboardCuesVisible_ = true;
+        SetKeyboardMenuIndex(index);
+        if (menuStrip_ != nullptr) {
+            SetFocus(menuStrip_);
+        }
+    }
+
+    void ExitMenuKeyboardMode(bool restoreEditorFocus) {
+        const bool changed = menuKeyboardCuesVisible_ || keyboardMenuIndex_ >= 0 || hotMenu_ >= 0;
+        menuKeyboardCuesVisible_ = false;
+        keyboardMenuIndex_ = -1;
+        if (activeMenu_ < 0) {
+            hotMenu_ = -1;
+        }
+        if (changed) {
+            InvalidateRect(menuStrip_, nullptr, FALSE);
+        }
+        if (restoreEditorFocus && editor_ != nullptr) {
+            SetFocus(editor_);
+        }
+    }
+
+    bool HandleMenuKeyDown(WPARAM key) {
+        if (key == VK_F10) {
+            EnterMenuKeyboardMode(CurrentKeyboardMenuIndex());
+            return true;
+        }
+
+        if (!menuKeyboardCuesVisible_) {
             return false;
         }
+
+        switch (key) {
+        case VK_ESCAPE:
+            ExitMenuKeyboardMode(true);
+            return true;
+        case VK_LEFT:
+            SetKeyboardMenuIndex(CurrentKeyboardMenuIndex() - 1);
+            return true;
+        case VK_RIGHT:
+            SetKeyboardMenuIndex(CurrentKeyboardMenuIndex() + 1);
+            return true;
+        case VK_DOWN:
+        case VK_RETURN:
+        case VK_SPACE:
+            ShowPopupMenu(CurrentKeyboardMenuIndex());
+            return true;
+        default:
+            if (OpenMenuFromKey(key)) {
+                return true;
+            }
+            return GetFocus() == menuStrip_;
+        }
+    }
+
+    bool HandleMenuSysKeyDown(WPARAM key) {
+        if (key == VK_MENU || key == VK_F10) {
+            EnterMenuKeyboardMode(CurrentKeyboardMenuIndex());
+            return true;
+        }
+        return OpenMenuFromKey(key);
+    }
+
+    bool HandleMenuSysKeyUp(WPARAM key) const {
+        return key == VK_MENU && menuKeyboardCuesVisible_;
+    }
+
+    bool OpenMenuFromKey(WPARAM key) {
+        const int index = MenuIndexForMnemonic(key);
+        if (index < 0) {
+            return false;
+        }
+
+        menuKeyboardCuesVisible_ = true;
+        keyboardMenuIndex_ = index;
+        ShowPopupMenu(index);
+        return true;
     }
 
     bool RegisterCustomPopupMenuClass() const {
@@ -1648,9 +1925,14 @@ private:
 
         const UINT command = ShowCustomPopupMenu(entry.menu, rect.left, rect.bottom);
 
+        const bool repaintAfterClose = activeMenu_ >= 0 || hotMenu_ >= 0 || keyboardMenuIndex_ >= 0 || menuKeyboardCuesVisible_;
         activeMenu_ = -1;
         hotMenu_ = -1;
-        InvalidateRect(menuStrip_, nullptr, FALSE);
+        menuMouseTracking_ = false;
+        ExitMenuKeyboardMode(true);
+        if (repaintAfterClose) {
+            InvalidateRect(menuStrip_, nullptr, FALSE);
+        }
 
         if (command != 0) {
             OnCommand(static_cast<WORD>(command), 0, nullptr);
@@ -1905,6 +2187,30 @@ private:
         InvalidateRect(menuStrip_, nullptr, TRUE);
         InvalidateRect(editor_, nullptr, TRUE);
         InvalidateRect(status_, nullptr, TRUE);
+    }
+
+    void EraseClientBackground(HDC hdc) const {
+        if (hdc == nullptr) {
+            return;
+        }
+
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        const ThemeColors colors = ColorsForTheme(darkMode_);
+        HBRUSH background = CreateSolidBrush(colors.editorBackground);
+        FillRect(hdc, &client, background);
+        DeleteObject(background);
+    }
+
+    void RefreshAfterDisplaySurfaceChange() {
+        // After sleep or display-driver resets, D2D HWND targets can keep a
+        // stale or white back buffer until forced through a full repaint cycle.
+        if (!darkModeForced_) {
+            darkMode_ = IsSystemDarkMode();
+        }
+        ApplyTheme();
+        editorView_.ResetDeviceResources();
+        RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     }
 
     void UpdateTitle() const {
@@ -2195,6 +2501,7 @@ private:
     UINT dpi_{USER_DEFAULT_SCREEN_DPI};
     int hotMenu_{-1};
     int activeMenu_{-1};
+    int keyboardMenuIndex_{-1};
     bool dirty_{false};
     bool readOnlyPreview_{false};
     bool replaceDialogOpen_{false};
@@ -2208,6 +2515,9 @@ private:
     bool hasSavedWindowRect_{false};
     bool savedWindowMaximized_{false};
     bool menuMouseTracking_{false};
+    bool menuKeyboardCuesVisible_{false};
+    bool updateCheckInProgress_{false};
+    bool updateDownloadInProgress_{false};
 };
 
 } // namespace
