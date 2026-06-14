@@ -13,7 +13,7 @@ behavior remain explicit.
 | Popup menus | `src/PopupMenu.h`, `src/PopupMenu.cpp` | Owner-drawn dark menu and context-menu windows plus the drop shadow |
 | File codec | `src/FileCodec.h`, `src/FileCodec.cpp` | Encoding detection, file read/write, large-file preview, and open/save pickers |
 | Printing | `src/Printing.h`, `src/Printing.cpp` | Threaded pagination/spooling worker |
-| Dialogs | `src/FontDialog.*`, `src/FindReplaceDialog.*`, `src/GoToDialog.*`, `src/AboutDialog.*` | Custom dark-mode modal/modeless dialogs, each exposing a single entry point |
+| Dialogs | `src/FontDialog.*`, `src/FindReplaceDialog.*`, `src/GoToDialog.*`, `src/AboutDialog.*`, `src/MessageDialog.*` | Custom dark-mode modal/modeless dialogs, including NativePad-owned message prompts |
 | Settings | `src/Settings.h`, `src/Settings.cpp` | INI preference read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini`, with one-time migration from legacy registry values |
 | Default editor | `src/DefaultEditor.h`, `src/DefaultEditor.cpp` | Per-user file-association registration for `.txt` and the Windows "Default apps" hand-off |
 | Update checker | `src/UpdateChecker.h`, `src/UpdateChecker.cpp` | GitHub release discovery, installer download, SHA-256 verification, and update-check preferences |

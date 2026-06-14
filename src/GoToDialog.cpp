@@ -6,6 +6,7 @@
 #include <cwctype>
 #include <string>
 
+#include "MessageDialog.h"
 #include "UiSupport.h"
 
 namespace NativePad {
@@ -25,6 +26,7 @@ struct GoToDialogState {
     HWND rangeLabel{};
     HWND ok{};
     HWND cancel{};
+    HINSTANCE instance{};
     HFONT font{};
     HBRUSH backgroundBrush{};
     HBRUSH controlBrush{};
@@ -75,11 +77,15 @@ void LayoutGoToDialog(GoToDialogState* state) {
     InvalidateRect(state->hwnd, nullptr, TRUE);
 }
 
-bool TryReadGoToLine(HWND owner, HWND edit, size_t maxLine, size_t& line) {
+bool TryReadGoToLine(GoToDialogState* state, size_t& line) {
     // UI input is one-based to match Notepad. EditorView consumes zero-based
     // line indices, so convert only after validation succeeds.
+    if (state == nullptr) {
+        return false;
+    }
+
     std::array<wchar_t, 64> buffer{};
-    GetWindowTextW(edit, buffer.data(), static_cast<int>(buffer.size()));
+    GetWindowTextW(state->edit, buffer.data(), static_cast<int>(buffer.size()));
 
     wchar_t* end = nullptr;
     const unsigned long long value = wcstoull(buffer.data(), &end, 10);
@@ -87,13 +93,20 @@ bool TryReadGoToLine(HWND owner, HWND edit, size_t maxLine, size_t& line) {
         ++end;
     }
 
-    if (buffer[0] == L'\0' || end == buffer.data() || (end != nullptr && *end != L'\0') || value == 0 || value > maxLine) {
+    if (buffer[0] == L'\0' || end == buffer.data() || (end != nullptr && *end != L'\0') || value == 0 || value > state->maxLine) {
         std::wstring message = L"Line number must be between 1 and ";
-        message += std::to_wstring(maxLine);
+        message += std::to_wstring(state->maxLine);
         message += L".";
-        MessageBoxW(owner, message.c_str(), L"NativePad - Go To Line", MB_ICONINFORMATION | MB_OK);
-        SetFocus(edit);
-        SendMessageW(edit, EM_SETSEL, 0, -1);
+        ShowMessageDialog(
+            state->hwnd,
+            state->instance,
+            state->dpi,
+            state->dark,
+            L"NativePad - Go To Line",
+            message,
+            MessageDialogIcon::Information);
+        SetFocus(state->edit);
+        SendMessageW(state->edit, EM_SETSEL, 0, -1);
         return false;
     }
 
@@ -207,7 +220,7 @@ LRESULT CALLBACK GoToDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case IDOK:
-            if (TryReadGoToLine(hwnd, state->edit, state->maxLine, state->selectedLine)) {
+            if (TryReadGoToLine(state, state->selectedLine)) {
                 state->accepted = true;
                 DestroyWindow(hwnd);
             }
@@ -266,7 +279,7 @@ std::optional<std::size_t> ShowGoToLineDialog(HWND owner, HINSTANCE instance, UI
     wc.lpszClassName = kGoToDialogClass;
     AssignWindowClassIcons(wc, instance);
     if (RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), L"NativePad - Go To Line", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(owner, instance, dpi, dark, L"NativePad - Go To Line", GetLastErrorText(), MessageDialogIcon::Error);
         return std::nullopt;
     }
 
@@ -279,6 +292,7 @@ std::optional<std::size_t> ShowGoToLineDialog(HWND owner, HINSTANCE instance, UI
 
     GoToDialogState state{};
     state.owner = owner;
+    state.instance = instance;
     state.dpi = dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi;
     state.currentLine = std::max<size_t>(1, currentLine);
     state.maxLine = std::max<size_t>(1, maxLine);
@@ -298,7 +312,7 @@ std::optional<std::size_t> ShowGoToLineDialog(HWND owner, HINSTANCE instance, UI
         instance,
         &state);
     if (dialog == nullptr) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), L"NativePad - Go To Line", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(owner, instance, dpi, dark, L"NativePad - Go To Line", GetLastErrorText(), MessageDialogIcon::Error);
         return std::nullopt;
     }
     ApplyWindowIcons(dialog, instance);

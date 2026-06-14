@@ -54,11 +54,17 @@ NativePad currently has custom dialogs for:
 - Go To.
 - Find/Replace.
 - Font.
+- Message prompts.
 
 They use normal child controls where possible, with custom parent-painted
 backgrounds and borders.
 The About dialog also exposes update checking controls; those controls reuse the
 same button and checkbox theming as the rest of the custom dialogs.
+NativePad-owned confirmations, errors, and informational prompts use
+`MessageDialog` so Yes/No and save prompts follow the app theme. OS-owned common
+file, page setup, and print dialogs remain native.
+Message prompt icons are embedded 256 px PNG resources decoded to the current
+DPI size through WIC, rather than stretched from low-resolution system icons.
 Dialogs rely on the native DWM frame and shadow. Avoid adding separate shadow
 helper windows around dialogs because they do not match the DWM-rounded frame
 and can read as extra window chrome.
@@ -117,7 +123,9 @@ When changing UI code, test:
 - Dark and light mode.
 - 100%, 125%, 150%, and mixed-DPI monitor moves.
 - Resizing dialogs.
+- Message prompt icons at 150% and 200% DPI.
 - Scrolling owner-draw list boxes.
 - Popup menu hover, disabled items, and separators.
 - Context menu over the editor.
+- Arrow cursor over custom popup menus, including editor context menus.
 - Horizontal and vertical scrollbars.

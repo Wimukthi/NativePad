@@ -63,9 +63,14 @@ dialogs, printing, DPI changes, and real-world file handling.
 - View > Dark Mode override persists.
 - Main menus, editor context menu, status bar, custom dialogs, and scrollbars are
   usable in dark mode.
+- NativePad-owned save confirmations, errors, and informational prompts use the
+  custom dark message dialog.
+- Custom message prompt icons remain crisp at 150% and 200% scaling.
 - Alt/F10 reveals top-level menu mnemonic underlines, and Esc returns focus to
   the editor.
 - Popup menu borders and shadows are subtle and do not steal active-window focus.
+- Custom popup menus and the editor context menu show the arrow cursor, not the
+  editor I-beam.
 - Moving between 100%, 125%, 150%, and 200% DPI monitors keeps text, menus,
   dialogs, and scrollbars correctly sized.
 - Startup and wake-from-sleep repaint directly to the active theme without a

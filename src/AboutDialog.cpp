@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "resource.h"
+#include "MessageDialog.h"
 #include "UpdateChecker.h"
 #include "UiSupport.h"
 
@@ -394,7 +395,7 @@ void ShowAboutDialog(HWND owner, HINSTANCE instance, UINT dpi, bool dark) {
     wc.lpszClassName = kAboutDialogClass;
     AssignWindowClassIcons(wc, instance);
     if (RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), L"NativePad - About", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(owner, instance, dpi, dark, L"NativePad - About", GetLastErrorText(), MessageDialogIcon::Error);
         return;
     }
 
@@ -426,7 +427,7 @@ void ShowAboutDialog(HWND owner, HINSTANCE instance, UINT dpi, bool dark) {
         instance,
         &state);
     if (dialog == nullptr) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), L"NativePad - About", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(owner, instance, dpi, dark, L"NativePad - About", GetLastErrorText(), MessageDialogIcon::Error);
         return;
     }
     ApplyWindowIcons(dialog, instance);

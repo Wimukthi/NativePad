@@ -1,13 +1,18 @@
 #include <windows.h>
 #include "resource.h"
 
-IDI_NATIVEPAD ICON "icons\\NativePad.ico"
+IDI_NATIVEPAD ICON "Icons\\NativePad.ico"
+
+IDB_MESSAGE_INFO PNG "Icons\\message-info.png"
+IDB_MESSAGE_WARNING PNG "Icons\\message-warning.png"
+IDB_MESSAGE_ERROR PNG "Icons\\message-error.png"
+IDB_MESSAGE_QUESTION PNG "Icons\\message-question.png"
 
 // Version metadata is embedded directly because the UI is built dynamically in
 // C++ instead of through a dialog/menu resource script.
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,3
- PRODUCTVERSION 1,0,0,3
+ FILEVERSION 1,0,0,4
+ PRODUCTVERSION 1,0,0,4
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -24,12 +29,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Wimukthi Bandara"
             VALUE "FileDescription", "NativePad"
-            VALUE "FileVersion", "1.0.0.3"
+            VALUE "FileVersion", "1.0.0.4"
             VALUE "InternalName", "NativePad.exe"
             VALUE "LegalCopyright", "GPL V3"
             VALUE "OriginalFilename", "NativePad.exe"
             VALUE "ProductName", "NativePad"
-            VALUE "ProductVersion", "1.0.0.3"
+            VALUE "ProductVersion", "1.0.0.4"
         END
     END
     BLOCK "VarFileInfo"

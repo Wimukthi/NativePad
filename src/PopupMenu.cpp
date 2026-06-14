@@ -369,10 +369,16 @@ LRESULT CALLBACK CustomPopupMenuProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     }
 
     switch (message) {
+    case WM_SETCURSOR:
+        // The editor window normally owns an I-beam cursor. Popup menus are
+        // no-activate windows, so force the arrow while the cursor is over them.
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        return TRUE;
     case WM_PAINT:
         PaintCustomPopupMenu(state);
         return 0;
     case WM_MOUSEMOVE: {
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const int hit = HitTestPopupMenuItem(state, point);
         if (state != nullptr && hit != state->hotIndex) {

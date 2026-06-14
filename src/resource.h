@@ -4,6 +4,10 @@
 // handling. Keep new command ranges grouped by menu.
 #define IDI_NATIVEPAD 100
 #define IDR_MAINMENU 101
+#define IDB_MESSAGE_INFO 201
+#define IDB_MESSAGE_WARNING 202
+#define IDB_MESSAGE_ERROR 203
+#define IDB_MESSAGE_QUESTION 204
 #define ID_FILE_NEW 40001
 #define ID_FILE_OPEN 40002
 #define ID_FILE_SAVE 40003

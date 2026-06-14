@@ -34,6 +34,7 @@
 #include "FontDialog.h"
 #include "GoToDialog.h"
 #include "MappedTextDocument.h"
+#include "MessageDialog.h"
 #include "PopupMenu.h"
 #include "Printing.h"
 #include "resource.h"
@@ -184,17 +185,17 @@ public:
         wc.lpszClassName = kWindowClass;
 
         if (RegisterClassExW(&wc) == 0) {
-            MessageBoxW(nullptr, GetLastErrorText().c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowStartupMessage(GetLastErrorText(), MessageDialogIcon::Error);
             return false;
         }
 
         if (!NativePad::EditorView::Register(instance_)) {
-            MessageBoxW(nullptr, GetLastErrorText().c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowStartupMessage(GetLastErrorText(), MessageDialogIcon::Error);
             return false;
         }
 
         if (!RegisterChildClasses()) {
-            MessageBoxW(nullptr, GetLastErrorText().c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowStartupMessage(GetLastErrorText(), MessageDialogIcon::Error);
             return false;
         }
 
@@ -225,7 +226,7 @@ public:
             this);
 
         if (hwnd_ == nullptr) {
-            MessageBoxW(nullptr, GetLastErrorText().c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowStartupMessage(GetLastErrorText(), MessageDialogIcon::Error);
             return false;
         }
 
@@ -543,12 +544,12 @@ private:
             this);
 
         if (menuStrip_ == nullptr) {
-            MessageBoxW(hwnd_, L"Could not create the menu strip.", L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(L"Could not create the menu strip.", MessageDialogIcon::Error);
             return -1;
         }
 
         if (!editorView_.Create(hwnd_, instance_, &document_)) {
-            MessageBoxW(hwnd_, L"Could not create the DirectWrite editor view.", L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(L"Could not create the DirectWrite editor view.", MessageDialogIcon::Error);
             return -1;
         }
         editor_ = editorView_.Hwnd();
@@ -568,7 +569,7 @@ private:
             nullptr);
 
         if (status_ == nullptr) {
-            MessageBoxW(hwnd_, L"Could not create the native status bar.", L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(L"Could not create the native status bar.", MessageDialogIcon::Error);
             return -1;
         }
 
@@ -760,7 +761,20 @@ private:
     void ShowRoadmapMessage(const wchar_t* command) const {
         std::wstring message = command;
         message += L" is on the classic Notepad parity roadmap and has not been implemented yet.";
-        MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONINFORMATION | MB_OK);
+        ShowAppMessage(message, MessageDialogIcon::Information);
+    }
+
+    int ShowAppMessage(
+        std::wstring_view message,
+        MessageDialogIcon icon,
+        std::wstring_view title = L"NativePad",
+        MessageDialogButtons buttons = MessageDialogButtons::Ok,
+        int defaultResult = IDOK) const {
+        return ShowMessageDialog(hwnd_, instance_, dpi_, darkMode_, title, message, icon, buttons, defaultResult);
+    }
+
+    int ShowStartupMessage(std::wstring_view message, MessageDialogIcon icon) const {
+        return ShowMessageDialog(nullptr, instance_, dpi_, darkMode_, L"NativePad", message, icon);
     }
 
     void SetFindBuffer(std::wstring_view text) {
@@ -905,7 +919,7 @@ private:
         std::wstring message = L"Cannot find \"";
         message += lastFindText_;
         message += L"\"";
-        MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONINFORMATION | MB_OK);
+        ShowAppMessage(message, MessageDialogIcon::Information);
     }
 
     void FindNext(bool down, bool focusEditor = true) {
@@ -1016,7 +1030,7 @@ private:
         std::wstring message = L"Replaced ";
         message += std::to_wstring(replacements);
         message += replacements == 1 ? L" occurrence." : L" occurrences.";
-        MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONINFORMATION | MB_OK);
+        ShowAppMessage(message, MessageDialogIcon::Information);
     }
 
     void ShowGoToDialog() {
@@ -1038,7 +1052,7 @@ private:
         if (!PromptSetDefaultEditor(hwnd_, instance_, error)) {
             std::wstring message = L"Could not register NativePad as a text editor:\n\n";
             message += error;
-            MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Error);
         }
     }
 
@@ -1060,7 +1074,7 @@ private:
     void BeginUpdateCheck(UpdateCheckKind kind) {
         if (updateCheckInProgress_) {
             if (kind == UpdateCheckKind::Manual) {
-                MessageBoxW(hwnd_, L"An update check is already running.", L"NativePad", MB_ICONINFORMATION | MB_OK);
+                ShowAppMessage(L"An update check is already running.", MessageDialogIcon::Information);
             }
             return;
         }
@@ -1074,12 +1088,12 @@ private:
 
     void BeginUpdateDownload(const UpdateInfo& update) {
         if (updateDownloadInProgress_) {
-            MessageBoxW(hwnd_, L"An update download is already running.", L"NativePad", MB_ICONINFORMATION | MB_OK);
+            ShowAppMessage(L"An update download is already running.", MessageDialogIcon::Information);
             return;
         }
 
         updateDownloadInProgress_ = true;
-        MessageBoxW(hwnd_, L"NativePad will download the installer in the background.", L"NativePad", MB_ICONINFORMATION | MB_OK);
+        ShowAppMessage(L"NativePad will download the installer in the background.", MessageDialogIcon::Information);
         StartUpdateDownload(hwnd_, update);
     }
 
@@ -1095,7 +1109,7 @@ private:
         if (!result->success) {
             if (manual) {
                 std::wstring message = L"Could not check for updates:\n\n" + result->message;
-                MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+                ShowAppMessage(message, MessageDialogIcon::Error);
             }
             return;
         }
@@ -1103,7 +1117,7 @@ private:
         if (!result->updateAvailable) {
             if (manual) {
                 const std::wstring message = L"NativePad is up to date.\n\nInstalled version: " + CurrentExecutableVersion(instance_);
-                MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONINFORMATION | MB_OK);
+                ShowAppMessage(message, MessageDialogIcon::Information);
             }
             return;
         }
@@ -1111,7 +1125,7 @@ private:
         std::wstring message = L"NativePad ";
         message += result->update.version;
         message += L" is available.\n\nDownload and install it now?";
-        if (MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1) == IDYES) {
+        if (ShowAppMessage(message, MessageDialogIcon::Question, L"NativePad Update", MessageDialogButtons::YesNo, IDYES) == IDYES) {
             BeginUpdateDownload(result->update);
         }
     }
@@ -1125,14 +1139,14 @@ private:
 
         if (!result->success) {
             std::wstring message = L"Could not download the NativePad update:\n\n" + result->message;
-            MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONERROR | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Error, L"NativePad Update");
             return;
         }
 
         std::wstring message = L"NativePad ";
         message += result->update.version;
         message += L" has been downloaded.\n\nSave any open work and run the installer now?";
-        if (MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1) != IDYES) {
+        if (ShowAppMessage(message, MessageDialogIcon::Question, L"NativePad Update", MessageDialogButtons::YesNo, IDYES) != IDYES) {
             return;
         }
 
@@ -1154,7 +1168,7 @@ private:
         if (launchResult <= 32) {
             std::wstring message = L"Could not launch the installer:\n\n";
             message += GetLastErrorText(static_cast<DWORD>(launchResult));
-            MessageBoxW(hwnd_, message.c_str(), L"NativePad Update", MB_ICONERROR | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Error, L"NativePad Update");
             return;
         }
 
@@ -1197,7 +1211,7 @@ private:
             const wchar_t* message = IsMappedLargeFile()
                                          ? L"Printing is disabled for read-only mapped large files."
                                          : L"Printing is disabled for read-only large-file previews.";
-            MessageBoxW(hwnd_, message, L"NativePad", MB_ICONINFORMATION | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Information);
             return;
         }
 
@@ -1244,7 +1258,7 @@ private:
 
         if (!result->success) {
             const std::wstring message = L"Could not print document:\n\n" + result->message;
-            MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Error);
         }
 
         UpdateStatus();
@@ -2310,11 +2324,12 @@ private:
             return true;
         }
 
-        const int choice = MessageBoxW(
-            hwnd_,
+        const int choice = ShowAppMessage(
             L"Save changes to this document?",
+            MessageDialogIcon::Question,
             L"NativePad",
-            MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON1);
+            MessageDialogButtons::YesNoCancel,
+            IDYES);
 
         if (choice == IDCANCEL) {
             return false;
@@ -2366,7 +2381,7 @@ private:
             auto mapped = std::make_unique<NativePad::MappedTextDocument>();
             if (!mapped->Open(path, error)) {
                 std::wstring message = L"Could not open large file:\n\n" + error;
-                MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+                ShowAppMessage(message, MessageDialogIcon::Error);
                 return;
             }
 
@@ -2386,7 +2401,7 @@ private:
         auto file = ReadTextFile(path, error);
         if (!file) {
             std::wstring message = L"Could not open file:\n\n" + error;
-            MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Error);
             return;
         }
 
@@ -2408,11 +2423,7 @@ private:
             const wchar_t* message = IsMappedLargeFile()
                                          ? L"This file is opened through the read-only large-file mapper. Saving is disabled until editable large-file storage is implemented."
                                          : L"This is a read-only large-file preview. NativePad is showing only the initial chunk, so saving is disabled.";
-            MessageBoxW(
-                hwnd_,
-                message,
-                L"NativePad",
-                MB_ICONINFORMATION | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Information);
             return false;
         }
 
@@ -2431,7 +2442,7 @@ private:
         std::wstring error;
         if (!WriteTextFile(path, text, targetEncoding, documentLineEnding_, error)) {
             std::wstring message = L"Could not save file:\n\n" + error;
-            MessageBoxW(hwnd_, message.c_str(), L"NativePad", MB_ICONERROR | MB_OK);
+            ShowAppMessage(message, MessageDialogIcon::Error);
             return false;
         }
 

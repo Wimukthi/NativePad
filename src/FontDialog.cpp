@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "MessageDialog.h"
 #include "UiSupport.h"
 
 namespace NativePad {
@@ -76,6 +77,7 @@ struct FontDialogState {
     HWND sample{};
     HWND ok{};
     HWND cancel{};
+    HINSTANCE instance{};
     HFONT uiFont{};
     HFONT previewFont{};
     HBRUSH backgroundBrush{};
@@ -278,7 +280,14 @@ bool ReadFontDialogSelection(FontDialogState* state, NativePad::EditorFontSpec& 
     std::wstring family = Trim(ControlText(state->familyEdit));
     if (family.empty()) {
         if (showErrors) {
-            MessageBoxW(state->hwnd, L"Choose a font family.", L"NativePad - Font", MB_ICONINFORMATION | MB_OK);
+            ShowMessageDialog(
+                state->hwnd,
+                state->instance,
+                state->dpi,
+                state->dark,
+                L"NativePad - Font",
+                L"Choose a font family.",
+                MessageDialogIcon::Information);
             SetFocus(state->familyEdit);
         }
         return false;
@@ -287,7 +296,14 @@ bool ReadFontDialogSelection(FontDialogState* state, NativePad::EditorFontSpec& 
     float pointSize = 0.0f;
     if (!TryParsePointSize(ControlText(state->sizeEdit), pointSize)) {
         if (showErrors) {
-            MessageBoxW(state->hwnd, L"Font size must be between 1 and 200 points.", L"NativePad - Font", MB_ICONINFORMATION | MB_OK);
+            ShowMessageDialog(
+                state->hwnd,
+                state->instance,
+                state->dpi,
+                state->dark,
+                L"NativePad - Font",
+                L"Font size must be between 1 and 200 points.",
+                MessageDialogIcon::Information);
             SetFocus(state->sizeEdit);
             SendMessageW(state->sizeEdit, EM_SETSEL, 0, -1);
         }
@@ -730,7 +746,7 @@ std::optional<NativePad::EditorFontSpec> ShowFontDialog(HWND owner, HINSTANCE in
     wc.lpszClassName = kFontDialogClass;
     AssignWindowClassIcons(wc, instance);
     if (RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), L"NativePad - Font", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(owner, instance, dpi, dark, L"NativePad - Font", GetLastErrorText(), MessageDialogIcon::Error);
         return std::nullopt;
     }
 
@@ -744,6 +760,7 @@ std::optional<NativePad::EditorFontSpec> ShowFontDialog(HWND owner, HINSTANCE in
 
     FontDialogState state{};
     state.owner = owner;
+    state.instance = instance;
     state.dpi = dpi;
     state.dark = dark;
     state.initialFont = currentFont;
@@ -763,7 +780,7 @@ std::optional<NativePad::EditorFontSpec> ShowFontDialog(HWND owner, HINSTANCE in
         instance,
         &state);
     if (dialog == nullptr) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), L"NativePad - Font", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(owner, instance, dpi, dark, L"NativePad - Font", GetLastErrorText(), MessageDialogIcon::Error);
         return std::nullopt;
     }
     ApplyWindowIcons(dialog, instance);

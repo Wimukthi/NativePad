@@ -3,6 +3,7 @@
 #include <array>
 #include <string>
 
+#include "MessageDialog.h"
 #include "UiSupport.h"
 
 namespace NativePad {
@@ -506,7 +507,14 @@ HWND ShowFindReplaceDialog(
     wc.lpszClassName = kFindReplaceDialogClass;
     AssignWindowClassIcons(wc, instance);
     if (RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), replaceMode ? L"NativePad - Replace" : L"NativePad - Find", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(
+            owner,
+            instance,
+            dpi,
+            dark,
+            replaceMode ? L"NativePad - Replace" : L"NativePad - Find",
+            GetLastErrorText(),
+            MessageDialogIcon::Error);
         return nullptr;
     }
 
@@ -542,7 +550,14 @@ HWND ShowFindReplaceDialog(
         instance,
         state);
     if (dialog == nullptr) {
-        MessageBoxW(owner, GetLastErrorText().c_str(), replaceMode ? L"NativePad - Replace" : L"NativePad - Find", MB_ICONERROR | MB_OK);
+        ShowMessageDialog(
+            owner,
+            instance,
+            dpi,
+            dark,
+            replaceMode ? L"NativePad - Replace" : L"NativePad - Find",
+            GetLastErrorText(),
+            MessageDialogIcon::Error);
         return nullptr;
     }
     ApplyWindowIcons(dialog, instance);
