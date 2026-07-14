@@ -183,6 +183,23 @@ void EditorView::ResetView() {
     NotifyCursorChanged();
 }
 
+void EditorView::RefreshDocumentMetrics() {
+    // The active document changed size outside the editing paths (for example a
+    // mapped file grew on disk). Recompute derived state without resetting the
+    // caret, selection, scroll position, or undo history.
+    const std::size_t length = DocumentLength();
+    caret_ = std::min(caret_, length);
+    anchor_ = std::min(anchor_, length);
+    InvalidateVisualRowCache();
+    UpdateScrollbars();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    NotifyCursorChanged();
+}
+
+void EditorView::MoveCaretToDocumentEnd() {
+    SetCaret(DocumentLength(), false);
+}
+
 void EditorView::SetTheme(EditorTheme theme) {
     theme_ = theme;
     if (impl_->textBrush) {

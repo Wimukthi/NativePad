@@ -47,6 +47,8 @@ public:
     void SetDocument(DocumentBuffer* document);
     void SetMappedDocument(MappedTextDocument* document);
     void ResetView();
+    void RefreshDocumentMetrics();
+    void MoveCaretToDocumentEnd();
     void SetTheme(EditorTheme theme);
     void SetFont(EditorFontSpec font);
     [[nodiscard]] const EditorFontSpec& Font() const noexcept;

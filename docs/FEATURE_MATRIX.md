@@ -39,6 +39,7 @@ This table describes the current implementation state, not the final target.
 | Line Numbers | Done | Optional visual gutter; persisted; excluded from save/copy/search/print |
 | Status Bar | Done | Toggleable; shows line, column, total lines, encoding, and character count |
 | Dark Mode | Done | System default plus manual View toggle |
+| Follow Tail | Done | View menu/F6; polls the open file and follows appended content, keeping the caret at the end. Mapped large files refresh incrementally; editable files reload from disk and stay read-only while following |
 
 ## Help and System Integration
 
@@ -60,6 +61,7 @@ This table describes the current implementation state, not the final target.
 | Preferences | Done | INI-backed persistence for dark override, word wrap, line numbers, status bar, font, window placement, page margins, update URL, and update-check preference |
 | Large-file viewing | Done | Read-only mapped backend above editable limit |
 | Large-file editing | Not done | Requires new storage model |
+| External change detection | Done | On window activation, prompts to reload when the open file changed on disk; warns before discarding unsaved edits |
 
 ## Known Limitations
 

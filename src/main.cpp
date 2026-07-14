@@ -68,6 +68,40 @@ constexpr wchar_t kWindowClass[] = L"NativePadWindow";
 constexpr wchar_t kMenuStripClass[] = L"NativePadMenuStrip";
 constexpr wchar_t kUntitled[] = L"Untitled";
 
+// Posted after activation so the external-change prompt runs outside the
+// WM_ACTIVATE handshake instead of showing a modal dialog inside it.
+constexpr UINT WM_NATIVEPAD_FILE_CHANGE_CHECK = WM_APP + 306;
+
+constexpr UINT_PTR kTailTimerId = 1;
+constexpr UINT kTailTimerIntervalMs = 1000;
+
+// Size plus last write time is enough to notice external edits without keeping
+// a change-notification handle open on the containing directory.
+struct FileStamp {
+    ULONGLONG size{0};
+    FILETIME writeTime{};
+};
+
+std::optional<FileStamp> QueryFileStamp(const std::wstring& path) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes)) {
+        return std::nullopt;
+    }
+
+    FileStamp stamp;
+    stamp.size = (static_cast<ULONGLONG>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+    stamp.writeTime = attributes.ftLastWriteTime;
+    return stamp;
+}
+
+bool SameFileStamp(const FileStamp& left, const FileStamp& right) {
+    return left.size == right.size && CompareFileTime(&left.writeTime, &right.writeTime) == 0;
+}
+
 std::wstring BaseName(std::wstring_view path) {
     const size_t pos = path.find_last_of(L"\\/");
     if (pos == std::wstring_view::npos) {
@@ -435,6 +469,20 @@ private:
         case NativePad::WM_EDITOR_CURSOR_CHANGED:
             UpdateStatus();
             return 0;
+        case WM_ACTIVATE:
+            if (LOWORD(wParam) != WA_INACTIVE) {
+                PostMessageW(hwnd_, WM_NATIVEPAD_FILE_CHANGE_CHECK, 0, 0);
+            }
+            return DefWindowProcW(hwnd_, message, wParam, lParam);
+        case WM_NATIVEPAD_FILE_CHANGE_CHECK:
+            CheckExternalFileChange();
+            return 0;
+        case WM_TIMER:
+            if (wParam == kTailTimerId) {
+                OnTailTimer();
+                return 0;
+            }
+            return DefWindowProcW(hwnd_, message, wParam, lParam);
         case WM_NATIVEPAD_PRINT_COMPLETE:
             OnPrintComplete(reinterpret_cast<PrintResult*>(lParam));
             return 0;
@@ -638,6 +686,8 @@ private:
         AppendMenuCommand(viewMenu_, ID_VIEW_LINE_NUMBERS);
         AppendMenuCommand(viewMenu_, ID_VIEW_STATUS_BAR);
         AppendMenuCommand(viewMenu_, ID_VIEW_DARK_MODE);
+        AppendMenuSeparator(viewMenu_);
+        AppendMenuCommand(viewMenu_, ID_VIEW_FOLLOW_TAIL);
 
         helpMenu_ = CreatePopupMenu();
         AppendMenuCommand(helpMenu_, ID_HELP_DEFAULT_EDITOR);
@@ -740,6 +790,9 @@ private:
             darkMode_ = !darkMode_;
             darkModeForced_ = true;
             ApplyTheme();
+            break;
+        case ID_VIEW_FOLLOW_TAIL:
+            ToggleFollowTail();
             break;
         case ID_HELP_DEFAULT_EDITOR:
             SetAsDefaultEditor();
@@ -1440,6 +1493,8 @@ private:
             return L"&Line Numbers";
         case ID_VIEW_DARK_MODE:
             return L"&Dark Mode";
+        case ID_VIEW_FOLLOW_TAIL:
+            return L"Follow &Tail\tF6";
         case ID_HELP_CHECK_UPDATES:
             return L"Check for &Updates...";
         case ID_HELP_AUTO_UPDATE:
@@ -2128,7 +2183,9 @@ private:
             return;
         }
 
-        const bool canEdit = !readOnlyPreview_;
+        // Tail following reloads the buffer from disk, so edits (and saves that
+        // would race the writer) stay disabled while it is active.
+        const bool canEdit = !readOnlyPreview_ && !followTail_;
         const bool hasText = DocumentLength() > 0;
         const bool canDelete = canEdit && (editorView_.HasSelection() || editorView_.CaretPosition() < DocumentLength());
 
@@ -2152,6 +2209,8 @@ private:
         CheckMenuItem(menu, ID_VIEW_LINE_NUMBERS, MF_BYCOMMAND | (editorView_.ShowLineNumbers() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_STATUS_BAR, MF_BYCOMMAND | (statusBarVisible_ ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_DARK_MODE, MF_BYCOMMAND | (darkMode_ ? MF_CHECKED : MF_UNCHECKED));
+        EnableMenuItem(menu, ID_VIEW_FOLLOW_TAIL, MF_BYCOMMAND | (!currentPath_.empty() ? MF_ENABLED : MF_GRAYED));
+        CheckMenuItem(menu, ID_VIEW_FOLLOW_TAIL, MF_BYCOMMAND | (followTail_ ? MF_CHECKED : MF_UNCHECKED));
 
         // Reflect the current default-editor state, but only query the shell when
         // the Help menu is actually opening so other menus stay cheap.
@@ -2239,6 +2298,9 @@ private:
         } else if (readOnlyPreview_) {
             title += L" [Read-only preview]";
         }
+        if (followTail_) {
+            title += L" [Tail]";
+        }
         title += L" - NativePad";
         SetWindowTextW(hwnd_, title.c_str());
     }
@@ -2316,6 +2378,9 @@ private:
         }
 
         statusText_ = status;
+        if (followTail_) {
+            statusText_ += L"    FOLLOW TAIL";
+        }
         InvalidateRect(status_, nullptr, FALSE);
     }
 
@@ -2347,7 +2412,9 @@ private:
             return;
         }
 
+        StopFollowTail();
         currentPath_.clear();
+        fileStamp_.reset();
         documentEncoding_ = NativePad::TextEncoding::Utf8;
         documentLineEnding_ = NativePad::LineEnding::CrLf;
         encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
@@ -2373,7 +2440,13 @@ private:
         OpenDocument(*path);
     }
 
-    void OpenDocument(const std::wstring& path) {
+    bool OpenDocument(const std::wstring& path) {
+        // Tail following is a per-file mode; keep it only when the same path is
+        // being reloaded (external change or tail refresh), not on a new file.
+        if (followTail_ && path != currentPath_) {
+            StopFollowTail();
+        }
+
         // File size decides the backend: normal files become editable UTF-16 text,
         // while oversized files stay mapped and read-only.
         std::wstring error;
@@ -2382,7 +2455,7 @@ private:
             if (!mapped->Open(path, error)) {
                 std::wstring message = L"Could not open large file:\n\n" + error;
                 ShowAppMessage(message, MessageDialogIcon::Error);
-                return;
+                return false;
             }
 
             currentPath_ = path;
@@ -2392,17 +2465,18 @@ private:
             fileByteCount_ = mapped->FileByteCount();
             SetMappedEditorDocument(std::move(mapped));
             dirty_ = false;
+            RecordFileStamp();
             UpdateTitle();
             UpdateStatus();
             SetFocus(editor_);
-            return;
+            return true;
         }
 
         auto file = ReadTextFile(path, error);
         if (!file) {
             std::wstring message = L"Could not open file:\n\n" + error;
             ShowAppMessage(message, MessageDialogIcon::Error);
-            return;
+            return false;
         }
 
         currentPath_ = path;
@@ -2413,9 +2487,187 @@ private:
         previewDecodedByteCount_ = file->decodedByteCount;
         SetEditorText(file->text, file->readOnlyPreview);
         dirty_ = false;
+        RecordFileStamp();
         UpdateTitle();
         UpdateStatus();
         SetFocus(editor_);
+        return true;
+    }
+
+    void RecordFileStamp() {
+        fileStamp_ = QueryFileStamp(currentPath_);
+    }
+
+    bool ReloadCurrentDocument(bool preserveCaret) {
+        const std::wstring path = currentPath_;
+        if (path.empty()) {
+            return false;
+        }
+
+        const size_t caret = editorView_.CaretPosition();
+        if (!OpenDocument(path)) {
+            return false;
+        }
+
+        if (preserveCaret) {
+            editorView_.SelectRange(std::min(caret, DocumentLength()), 0);
+        }
+        return true;
+    }
+
+    void CheckExternalFileChange() {
+        // Follow Tail owns disk polling while it is active; this path only backs
+        // the on-activation "file changed on disk" prompt.
+        if (checkingExternalChange_ || followTail_ || currentPath_.empty() || !fileStamp_) {
+            return;
+        }
+
+        const auto stamp = QueryFileStamp(currentPath_);
+        if (!stamp || SameFileStamp(*stamp, *fileStamp_)) {
+            return;
+        }
+
+        // Record before prompting so declining does not re-prompt for the same
+        // change every time the window is activated.
+        fileStamp_ = stamp;
+
+        checkingExternalChange_ = true;
+        std::wstring message = BaseName(currentPath_);
+        message += dirty_
+                       ? L" has changed on disk.\n\nReload it and lose your unsaved changes?"
+                       : L" has changed on disk.\n\nReload it?";
+        const int choice = ShowAppMessage(
+            message,
+            MessageDialogIcon::Question,
+            L"NativePad",
+            MessageDialogButtons::YesNo,
+            dirty_ ? IDNO : IDYES);
+        checkingExternalChange_ = false;
+
+        if (choice == IDYES) {
+            ReloadCurrentDocument(true);
+        }
+    }
+
+    void ToggleFollowTail() {
+        if (followTail_) {
+            StopFollowTail();
+            UpdateTitle();
+            UpdateStatus();
+            SetFocus(editor_);
+            return;
+        }
+
+        if (currentPath_.empty()) {
+            return;
+        }
+
+        if (dirty_ && !ConfirmSaveIfDirty()) {
+            return;
+        }
+
+        followTail_ = true;
+
+        // Editable documents follow the file by reloading, so start from the
+        // current on-disk state and lock out edits that would be overwritten.
+        if (!IsMappedLargeFile()) {
+            const auto stamp = QueryFileStamp(currentPath_);
+            const bool staleBuffer = dirty_ || !stamp || !fileStamp_ || !SameFileStamp(*stamp, *fileStamp_);
+            if (staleBuffer && !ReloadCurrentDocument(false)) {
+                StopFollowTail();
+                return;
+            }
+            if (!IsMappedLargeFile()) {
+                editorView_.SetReadOnly(true);
+            }
+        }
+
+        editorView_.MoveCaretToDocumentEnd();
+        SetTimer(hwnd_, kTailTimerId, kTailTimerIntervalMs, nullptr);
+        UpdateTitle();
+        UpdateStatus();
+        SetFocus(editor_);
+    }
+
+    void StopFollowTail() {
+        if (!followTail_) {
+            return;
+        }
+
+        followTail_ = false;
+        KillTimer(hwnd_, kTailTimerId);
+        editorView_.SetReadOnly(readOnlyPreview_);
+    }
+
+    void OnTailTimer() {
+        if (!followTail_) {
+            return;
+        }
+
+        if (IsMappedLargeFile()) {
+            std::wstring error;
+            switch (mappedDocument_->Refresh(error)) {
+            case NativePad::MappedTextDocument::RefreshStatus::Unchanged: {
+                // Refresh follows the original handle. If the path now points at
+                // a different file (log rotation by delete + rename), the handle
+                // never changes, so compare the on-disk stamp separately.
+                const auto stamp = QueryFileStamp(currentPath_);
+                if (stamp && fileStamp_ && !SameFileStamp(*stamp, *fileStamp_)) {
+                    ReloadForTail();
+                }
+                return;
+            }
+            case NativePad::MappedTextDocument::RefreshStatus::Appended:
+                fileByteCount_ = mappedDocument_->FileByteCount();
+                RecordFileStamp();
+                editorView_.RefreshDocumentMetrics();
+                editorView_.MoveCaretToDocumentEnd();
+                UpdateStatus();
+                return;
+            case NativePad::MappedTextDocument::RefreshStatus::Replaced:
+                ReloadForTail();
+                return;
+            case NativePad::MappedTextDocument::RefreshStatus::Failed:
+                StopFollowTail();
+                UpdateTitle();
+                UpdateStatus();
+                ShowAppMessage(
+                    L"Follow Tail stopped because the file could not be refreshed:\n\n" + error,
+                    MessageDialogIcon::Warning);
+                return;
+            }
+            return;
+        }
+
+        const auto stamp = QueryFileStamp(currentPath_);
+        if (!stamp) {
+            // The file may be mid-replace (delete + rename). Keep polling.
+            return;
+        }
+
+        if (fileStamp_ && SameFileStamp(*stamp, *fileStamp_)) {
+            return;
+        }
+
+        ReloadForTail();
+    }
+
+    void ReloadForTail() {
+        if (!ReloadCurrentDocument(false)) {
+            // OpenDocument already reported the error; stop instead of showing
+            // the same failure dialog on every timer tick.
+            StopFollowTail();
+            UpdateTitle();
+            UpdateStatus();
+            return;
+        }
+
+        if (followTail_) {
+            if (!IsMappedLargeFile()) {
+                editorView_.SetReadOnly(true);
+            }
+            editorView_.MoveCaretToDocumentEnd();
+        }
     }
 
     bool SaveDocument(bool saveAs) {
@@ -2446,10 +2698,14 @@ private:
             return false;
         }
 
+        if (followTail_ && path != currentPath_) {
+            StopFollowTail();
+        }
         currentPath_ = path;
         documentEncoding_ = targetEncoding;
         encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
         dirty_ = false;
+        RecordFileStamp();
         UpdateTitle();
         UpdateStatus();
         return true;
@@ -2507,6 +2763,7 @@ private:
     HWND findDialog_{};
     RECT pageMarginsThousandths_{1000, 1000, 1000, 1000};
     RECT savedWindowRect_{};
+    std::optional<FileStamp> fileStamp_;
     uint64_t fileByteCount_{0};
     size_t previewDecodedByteCount_{0};
     UINT dpi_{USER_DEFAULT_SCREEN_DPI};
@@ -2515,6 +2772,8 @@ private:
     int keyboardMenuIndex_{-1};
     bool dirty_{false};
     bool readOnlyPreview_{false};
+    bool followTail_{false};
+    bool checkingExternalChange_{false};
     bool replaceDialogOpen_{false};
     bool lastFindMatchCase_{false};
     bool lastFindDown_{true};
@@ -2582,6 +2841,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         {FVIRTKEY | FCONTROL, 'G', ID_EDIT_GO_TO},
         {FVIRTKEY | FCONTROL, 'A', ID_EDIT_SELECT_ALL},
         {FVIRTKEY, VK_F5, ID_EDIT_TIME_DATE},
+        {FVIRTKEY, VK_F6, ID_VIEW_FOLLOW_TAIL},
     };
 
     HACCEL acceleratorTable = CreateAcceleratorTableW(accelerators, static_cast<int>(std::size(accelerators)));

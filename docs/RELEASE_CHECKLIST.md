@@ -87,6 +87,22 @@ dialogs, printing, DPI changes, and real-world file handling.
 - A downloaded installer is stored under `%LOCALAPPDATA%\NativePad\Updates`.
 - Dirty documents prompt before the downloaded installer is launched.
 
+## External Changes and Follow Tail
+
+- Editing the open file in another program and re-activating NativePad prompts
+  to reload; declining does not re-prompt until the file changes again.
+- The reload prompt warns explicitly when unsaved changes would be lost.
+- View > Follow Tail and F6 toggle tail following; the title shows `[Tail]` and
+  the status bar shows `FOLLOW TAIL`.
+- While following, appended lines from a live writer appear within about a
+  second and the view stays pinned to the end of the document.
+- Follow Tail on a mapped multi-GB file follows appends without a full rescan
+  (scrolling stays responsive while the file grows).
+- Editing commands and Save are disabled while Follow Tail is active and come
+  back when it is turned off.
+- Log rotation (delete + rename) while following reloads the new file.
+- Opening a different file or File > New turns Follow Tail off.
+
 ## Large Files
 
 - Files over the editable threshold open through the read-only mapped backend.

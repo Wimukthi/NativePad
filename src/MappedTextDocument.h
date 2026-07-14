@@ -22,6 +22,14 @@ public:
         std::size_t length{};
     };
 
+    // Result of re-checking the on-disk file behind an open document.
+    enum class RefreshStatus {
+        Unchanged, // Size and write time match what is already mapped.
+        Appended,  // The file grew; the new tail is mapped and indexed.
+        Replaced,  // The file shrank or was rewritten; the caller must reopen.
+        Failed,    // The file state could not be read or remapped.
+    };
+
     MappedTextDocument() = default;
     ~MappedTextDocument();
 
@@ -33,6 +41,11 @@ public:
 
     bool Open(const std::wstring& path, std::wstring& error);
     void Close() noexcept;
+
+    // Picks up external changes to the open file. Growth is handled in place by
+    // remapping and extending the line index from the previous end of content;
+    // any other change reports Replaced so the caller can reload from scratch.
+    RefreshStatus Refresh(std::wstring& error);
 
     [[nodiscard]] bool IsOpen() const noexcept;
     [[nodiscard]] std::uint64_t FileByteCount() const noexcept;
@@ -59,8 +72,7 @@ private:
 
     void DetectEncoding();
     void BuildLineIndex();
-    void BuildByteLineIndex();
-    void BuildUtf16LineIndex();
+    void ExtendLineIndex(std::size_t fromPosition);
     [[nodiscard]] wchar_t Utf16UnitAt(std::size_t position) const;
     [[nodiscard]] std::wstring Utf16TextRange(std::size_t position, std::size_t length) const;
     [[nodiscard]] std::wstring ByteTextRange(std::size_t position, std::size_t length) const;
@@ -71,6 +83,7 @@ private:
     HANDLE file_{INVALID_HANDLE_VALUE};
     HANDLE mapping_{};
     const unsigned char* data_{};
+    FILETIME lastWriteTime_{};
     std::uint64_t fileByteCount_{0};
     std::size_t dataOffset_{0};
     std::size_t contentByteCount_{0};

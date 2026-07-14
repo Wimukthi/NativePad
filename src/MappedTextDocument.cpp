@@ -139,6 +139,7 @@ MappedTextDocument& MappedTextDocument::operator=(MappedTextDocument&& other) no
     file_ = other.file_;
     mapping_ = other.mapping_;
     data_ = other.data_;
+    lastWriteTime_ = other.lastWriteTime_;
     fileByteCount_ = other.fileByteCount_;
     dataOffset_ = other.dataOffset_;
     contentByteCount_ = other.contentByteCount_;
@@ -151,6 +152,7 @@ MappedTextDocument& MappedTextDocument::operator=(MappedTextDocument&& other) no
     other.file_ = INVALID_HANDLE_VALUE;
     other.mapping_ = nullptr;
     other.data_ = nullptr;
+    other.lastWriteTime_ = {};
     other.fileByteCount_ = 0;
     other.dataOffset_ = 0;
     other.contentByteCount_ = 0;
@@ -216,9 +218,81 @@ bool MappedTextDocument::Open(const std::wstring& path, std::wstring& error) {
         return false;
     }
 
+    if (!GetFileTime(file_, nullptr, nullptr, &lastWriteTime_)) {
+        error = LastErrorText();
+        Close();
+        return false;
+    }
+
     DetectEncoding();
     BuildLineIndex();
     return true;
+}
+
+MappedTextDocument::RefreshStatus MappedTextDocument::Refresh(std::wstring& error) {
+    if (!IsOpen()) {
+        error = L"No file is open.";
+        return RefreshStatus::Failed;
+    }
+
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file_, &size)) {
+        error = LastErrorText();
+        return RefreshStatus::Failed;
+    }
+
+    FILETIME writeTime{};
+    if (!GetFileTime(file_, nullptr, nullptr, &writeTime)) {
+        error = LastErrorText();
+        return RefreshStatus::Failed;
+    }
+
+    const auto newByteCount = static_cast<std::uint64_t>(size.QuadPart);
+    if (newByteCount < fileByteCount_) {
+        return RefreshStatus::Replaced;
+    }
+
+    if (newByteCount == fileByteCount_) {
+        if (CompareFileTime(&writeTime, &lastWriteTime_) == 0) {
+            return RefreshStatus::Unchanged;
+        }
+        // Same size but a newer write time means bytes were rewritten in place,
+        // so the line index and max-line metrics are stale. Force a reload.
+        return RefreshStatus::Replaced;
+    }
+
+    if (newByteCount > static_cast<unsigned long long>(std::numeric_limits<std::size_t>::max())) {
+        error = L"This file is too large for this 64-bit address space.";
+        return RefreshStatus::Failed;
+    }
+
+    // Map the grown file before releasing the current view so a failure leaves
+    // the document readable at its previous size.
+    HANDLE mapping = CreateFileMappingW(file_, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (mapping == nullptr) {
+        error = LastErrorText();
+        return RefreshStatus::Failed;
+    }
+
+    const auto* data = static_cast<const unsigned char*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0));
+    if (data == nullptr) {
+        error = LastErrorText();
+        CloseHandle(mapping);
+        return RefreshStatus::Failed;
+    }
+
+    UnmapViewOfFile(data_);
+    CloseHandle(mapping_);
+    data_ = data;
+    mapping_ = mapping;
+    lastWriteTime_ = writeTime;
+
+    const std::size_t previousLength = length_;
+    fileByteCount_ = newByteCount;
+    contentByteCount_ = static_cast<std::size_t>(fileByteCount_) - dataOffset_;
+    length_ = IsUtf16() ? contentByteCount_ / sizeof(wchar_t) : contentByteCount_;
+    ExtendLineIndex(previousLength);
+    return RefreshStatus::Appended;
 }
 
 void MappedTextDocument::Close() noexcept {
@@ -237,6 +311,7 @@ void MappedTextDocument::Close() noexcept {
         file_ = INVALID_HANDLE_VALUE;
     }
 
+    lastWriteTime_ = {};
     fileByteCount_ = 0;
     dataOffset_ = 0;
     contentByteCount_ = 0;
@@ -351,59 +426,48 @@ void MappedTextDocument::DetectEncoding() {
 }
 
 void MappedTextDocument::BuildLineIndex() {
+    lineStarts_.clear();
+    lineStarts_.push_back(0);
+    maxLineLength_ = 0;
+    ExtendLineIndex(0);
+}
+
+void MappedTextDocument::ExtendLineIndex(std::size_t fromPosition) {
+    // Byte-backed text uses byte offsets from the first content byte; UTF-16
+    // uses wchar code-unit offsets after the BOM. Scanning starts at
+    // fromPosition so Refresh can index only the appended tail, but the open
+    // line being extended is measured from its recorded start.
+    std::size_t lineStart = lineStarts_.back();
+
     if (IsUtf16()) {
-        BuildUtf16LineIndex();
+        for (std::size_t i = fromPosition; i < length_; ++i) {
+            if (Utf16UnitAt(i) != L'\n') {
+                continue;
+            }
+
+            std::size_t lineEnd = i;
+            if (lineEnd > lineStart && Utf16UnitAt(lineEnd - 1) == L'\r') {
+                --lineEnd;
+            }
+            maxLineLength_ = std::max(maxLineLength_, lineEnd - lineStart);
+            lineStarts_.push_back(i + 1);
+            lineStart = i + 1;
+        }
     } else {
-        BuildByteLineIndex();
-    }
-}
+        const unsigned char* content = data_ + dataOffset_;
+        for (std::size_t i = fromPosition; i < contentByteCount_; ++i) {
+            if (content[i] != '\n') {
+                continue;
+            }
 
-void MappedTextDocument::BuildByteLineIndex() {
-    // For byte-backed text, editor positions are byte offsets from the first
-    // content byte. That keeps indexing linear in file size and cheap in memory.
-    lineStarts_.clear();
-    lineStarts_.push_back(0);
-    maxLineLength_ = 0;
-
-    std::size_t lineStart = 0;
-    const unsigned char* content = data_ + dataOffset_;
-    for (std::size_t i = 0; i < contentByteCount_; ++i) {
-        if (content[i] != '\n') {
-            continue;
+            std::size_t lineEnd = i;
+            if (lineEnd > lineStart && content[lineEnd - 1] == '\r') {
+                --lineEnd;
+            }
+            maxLineLength_ = std::max(maxLineLength_, lineEnd - lineStart);
+            lineStarts_.push_back(i + 1);
+            lineStart = i + 1;
         }
-
-        std::size_t lineEnd = i;
-        if (lineEnd > lineStart && content[lineEnd - 1] == '\r') {
-            --lineEnd;
-        }
-        maxLineLength_ = std::max(maxLineLength_, lineEnd - lineStart);
-        lineStarts_.push_back(i + 1);
-        lineStart = i + 1;
-    }
-
-    maxLineLength_ = std::max(maxLineLength_, length_ - lineStart);
-}
-
-void MappedTextDocument::BuildUtf16LineIndex() {
-    // UTF-16 positions are wchar code-unit offsets after the BOM. This matches
-    // the editable buffer's coordinate system and preserves exact columns.
-    lineStarts_.clear();
-    lineStarts_.push_back(0);
-    maxLineLength_ = 0;
-
-    std::size_t lineStart = 0;
-    for (std::size_t i = 0; i < length_; ++i) {
-        if (Utf16UnitAt(i) != L'\n') {
-            continue;
-        }
-
-        std::size_t lineEnd = i;
-        if (lineEnd > lineStart && Utf16UnitAt(lineEnd - 1) == L'\r') {
-            --lineEnd;
-        }
-        maxLineLength_ = std::max(maxLineLength_, lineEnd - lineStart);
-        lineStarts_.push_back(i + 1);
-        lineStart = i + 1;
     }
 
     maxLineLength_ = std::max(maxLineLength_, length_ - lineStart);

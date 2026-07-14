@@ -124,6 +124,31 @@ current exceptions:
 
 Do not access HWND-owned UI state from worker threads.
 
+## External File Changes and Follow Tail
+
+`AppWindow` records a file stamp (size plus last write time) whenever a
+document is opened or saved. On window activation it re-queries the stamp and
+offers to reload when the file changed on disk, with an explicit warning when
+unsaved edits would be lost. Declining records the new stamp so the same change
+does not re-prompt on every activation.
+
+View > Follow Tail (F6) polls the open file on a one-second UI timer:
+
+- Mapped large files refresh in place. `MappedTextDocument::Refresh` remaps the
+  grown file and extends the line index from the previous end of content, so a
+  multi-gigabyte log never gets rescanned. Shrinks and same-size rewrites are
+  reported as `Replaced` and trigger a full reload; log rotation by
+  delete-and-rename is caught by comparing the path stamp because the mapped
+  handle keeps following the original file.
+- Editable files reload from disk when the stamp changes and the editor is kept
+  read-only while following so edits cannot race the external writer.
+
+After each refresh the caret moves to the document end so the newest content
+stays visible. Follow Tail is per-file state: it stops when a different file is
+opened or the document is reset to Untitled. Note that while a mapped document
+holds its file mapping, external writers can append but cannot truncate the
+file (Windows fails the truncation with `ERROR_USER_MAPPED_FILE`).
+
 ## Update Flow
 
 The update checker reads the latest GitHub release, compares the release tag to

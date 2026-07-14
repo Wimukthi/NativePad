@@ -126,6 +126,8 @@ Current tests cover:
 - Incremental line-index updates.
 - Mapped UTF-8/byte-backed line starts, range decoding, and find.
 - Mapped UTF-16 line starts, range decoding, and find.
+- Mapped-document refresh: appended content extends the line index across the
+  old mapping boundary, and in-place rewrites report as replaced.
 - Encoding labels, line-ending detection/normalization, and save encoding bytes.
 
 Manual testing is still needed for:
@@ -136,6 +138,7 @@ Manual testing is still needed for:
 - Print output.
 - File dialogs and drag/drop open.
 - Very large real-world files.
+- Follow Tail against a live log writer, and the reload-on-activation prompt.
 
 ## Clean Build Notes
 

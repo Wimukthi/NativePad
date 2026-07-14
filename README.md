@@ -16,6 +16,8 @@ of very large text files.
   replace, go to, font, line numbers, page setup, and print workflows.
 - Editable normal-file path using a piece-table document buffer.
 - Read-only memory-mapped large-file path for files above the editable limit.
+- External change detection with a reload prompt, and a Follow Tail mode (F6)
+  that follows growing files such as live logs.
 - Unit coverage for the piece table, line index, mapped document backend, and
   text-format save helpers.
 
