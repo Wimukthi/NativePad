@@ -60,5 +60,7 @@ Before producing a packaged release build:
 3. Run the test suite.
 4. Confirm the About dialog displays the expected version and build timestamp.
 
-The `Release Package` workflow asks for the expected version after the automatic
-increment and fails if the built executable version does not match.
+The `Release Package` workflow builds with `AutoIncrementVersion=false`, so the
+released version is exactly the value committed in `src/NativePad.rc`. It asks
+for that version as input and fails if the built executable version does not
+match.

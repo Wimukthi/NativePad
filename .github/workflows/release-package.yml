@@ -20,7 +20,9 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: Build Release
-        run: msbuild NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
+        # Do not auto-increment here: the release version is the value already
+        # committed in src/NativePad.rc, so the packaged build must not bump it.
+        run: msbuild NativePad.sln /p:Configuration=Release /p:Platform=x64 /p:AutoIncrementVersion=false /m
 
       - name: Test Release
         run: .\bin\x64\Release\NativePad.Tests.exe

@@ -106,9 +106,10 @@ test binary, creates `NativePad-<version>-win-x64.zip`, builds the Inno Setup
 installer `NativePadSetup-<version>-win-x64.exe`, and uploads both files as
 workflow artifacts.
 
-Run it from GitHub Actions with the expected version after the build-time
-increment. Before publishing the artifact, complete
-[Release Checklist](RELEASE_CHECKLIST.md).
+The packaging build runs with `AutoIncrementVersion=false`, so the released
+version equals the value already committed in `src/NativePad.rc`. Run it from
+GitHub Actions with that committed version as the input. Before publishing the
+artifact, complete [Release Checklist](RELEASE_CHECKLIST.md).
 
 The installer can also be built locally with:
 
