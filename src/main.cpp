@@ -83,6 +83,8 @@ constexpr UINT kTailTimerIntervalMs = 1000;
 constexpr UINT_PTR kRecoveryTimerId = 2;
 constexpr UINT kRecoverySaveDelayMs = 3000;
 
+constexpr size_t kMaxRecentFiles = ID_FILE_RECENT_LAST - ID_FILE_RECENT_FIRST + 1;
+
 // Size plus last write time is enough to notice external edits without keeping
 // a change-notification handle open on the containing directory.
 struct FileStamp {
@@ -367,6 +369,13 @@ private:
         if (auto maximized = ReadSettingsDword(L"WindowMaximized")) {
             savedWindowMaximized_ = *maximized != 0;
         }
+
+        for (size_t i = 0; i < kMaxRecentFiles; ++i) {
+            const std::wstring name = L"RecentFile" + std::to_wstring(i);
+            if (auto path = ReadSettingsString(name.c_str()); path && !path->empty()) {
+                recentFiles_.push_back(*path);
+            }
+        }
     }
 
     void SavePreferences() const {
@@ -385,6 +394,11 @@ private:
         WriteSettingsDword(L"FontSizeTenths", static_cast<DWORD>(std::lround(font.sizeDips * 10.0f)));
         WriteSettingsDword(L"FontWeight", static_cast<DWORD>(font.weight));
         WriteSettingsDword(L"FontItalic", font.italic ? 1u : 0u);
+
+        for (size_t i = 0; i < kMaxRecentFiles; ++i) {
+            const std::wstring name = L"RecentFile" + std::to_wstring(i);
+            WriteSettingsString(name.c_str(), i < recentFiles_.size() ? recentFiles_[i] : L"");
+        }
 
         WINDOWPLACEMENT placement{};
         placement.length = sizeof(placement);
@@ -476,6 +490,7 @@ private:
             UpdateStatus();
             return 0;
         case NativePad::WM_EDITOR_CURSOR_CHANGED:
+        case NativePad::WM_EDITOR_ZOOM_CHANGED:
             UpdateStatus();
             return 0;
         case WM_ACTIVATE:
@@ -670,15 +685,7 @@ private:
         // Menus are owner-drawn so dark mode can control backgrounds, separators,
         // accelerator text, and hover/pressed states consistently.
         fileMenu_ = CreatePopupMenu();
-        AppendMenuCommand(fileMenu_, ID_FILE_NEW);
-        AppendMenuCommand(fileMenu_, ID_FILE_OPEN);
-        AppendMenuCommand(fileMenu_, ID_FILE_SAVE);
-        AppendMenuCommand(fileMenu_, ID_FILE_SAVE_AS);
-        AppendMenuSeparator(fileMenu_);
-        AppendMenuCommand(fileMenu_, ID_FILE_PAGE_SETUP);
-        AppendMenuCommand(fileMenu_, ID_FILE_PRINT);
-        AppendMenuSeparator(fileMenu_);
-        AppendMenuCommand(fileMenu_, ID_FILE_EXIT);
+        RebuildFileMenu();
 
         editMenu_ = CreatePopupMenu();
         AppendMenuCommand(editMenu_, ID_EDIT_UNDO);
@@ -697,12 +704,21 @@ private:
         AppendMenuSeparator(editMenu_);
         AppendMenuCommand(editMenu_, ID_EDIT_SELECT_ALL);
         AppendMenuCommand(editMenu_, ID_EDIT_TIME_DATE);
+        AppendMenuSeparator(editMenu_);
+        AppendMenuCommand(editMenu_, ID_EDIT_DUPLICATE_LINE);
+        AppendMenuCommand(editMenu_, ID_EDIT_DELETE_LINE);
+        AppendMenuCommand(editMenu_, ID_EDIT_MOVE_LINE_UP);
+        AppendMenuCommand(editMenu_, ID_EDIT_MOVE_LINE_DOWN);
 
         formatMenu_ = CreatePopupMenu();
         AppendMenuCommand(formatMenu_, ID_FORMAT_WORD_WRAP);
         AppendMenuCommand(formatMenu_, ID_FORMAT_FONT);
 
         viewMenu_ = CreatePopupMenu();
+        AppendMenuCommand(viewMenu_, ID_VIEW_ZOOM_IN);
+        AppendMenuCommand(viewMenu_, ID_VIEW_ZOOM_OUT);
+        AppendMenuCommand(viewMenu_, ID_VIEW_ZOOM_RESET);
+        AppendMenuSeparator(viewMenu_);
         AppendMenuCommand(viewMenu_, ID_VIEW_LINE_NUMBERS);
         AppendMenuCommand(viewMenu_, ID_VIEW_STATUS_BAR);
         AppendMenuCommand(viewMenu_, ID_VIEW_DARK_MODE);
@@ -723,9 +739,72 @@ private:
         }};
     }
 
+    void RebuildFileMenu() {
+        while (GetMenuItemCount(fileMenu_) > 0) {
+            DeleteMenu(fileMenu_, 0, MF_BYPOSITION);
+        }
+
+        AppendMenuCommand(fileMenu_, ID_FILE_NEW);
+        AppendMenuCommand(fileMenu_, ID_FILE_OPEN);
+        AppendMenuCommand(fileMenu_, ID_FILE_SAVE);
+        AppendMenuCommand(fileMenu_, ID_FILE_SAVE_AS);
+        AppendMenuSeparator(fileMenu_);
+        AppendMenuCommand(fileMenu_, ID_FILE_PAGE_SETUP);
+        AppendMenuCommand(fileMenu_, ID_FILE_PRINT);
+        AppendMenuSeparator(fileMenu_);
+        if (!recentFiles_.empty()) {
+            for (size_t i = 0; i < recentFiles_.size(); ++i) {
+                AppendMenuCommand(fileMenu_, static_cast<UINT>(ID_FILE_RECENT_FIRST + i));
+            }
+            AppendMenuCommand(fileMenu_, ID_FILE_RECENT_CLEAR);
+            AppendMenuSeparator(fileMenu_);
+        }
+        AppendMenuCommand(fileMenu_, ID_FILE_EXIT);
+    }
+
+    void AddRecentFile(const std::wstring& path) {
+        if (path.empty()) {
+            return;
+        }
+
+        std::erase_if(recentFiles_, [&](const std::wstring& existing) {
+            return _wcsicmp(existing.c_str(), path.c_str()) == 0;
+        });
+        recentFiles_.insert(recentFiles_.begin(), path);
+        if (recentFiles_.size() > kMaxRecentFiles) {
+            recentFiles_.resize(kMaxRecentFiles);
+        }
+        RebuildFileMenu();
+    }
+
+    void OpenRecentFile(size_t index) {
+        if (index >= recentFiles_.size()) {
+            return;
+        }
+
+        const std::wstring path = recentFiles_[index];
+        if (!ConfirmSaveIfDirty()) {
+            return;
+        }
+
+        if (!OpenDocument(path)) {
+            // The open failed (the error dialog already ran); drop the stale
+            // entry so the menu only lists files that can still be opened.
+            std::erase_if(recentFiles_, [&](const std::wstring& existing) {
+                return _wcsicmp(existing.c_str(), path.c_str()) == 0;
+            });
+            RebuildFileMenu();
+        }
+    }
+
     void OnCommand(WORD id, WORD notification, HWND source) {
         UNREFERENCED_PARAMETER(notification);
         if (source == editor_) {
+            return;
+        }
+
+        if (id >= ID_FILE_RECENT_FIRST && id <= ID_FILE_RECENT_LAST) {
+            OpenRecentFile(static_cast<size_t>(id - ID_FILE_RECENT_FIRST));
             return;
         }
 
@@ -790,6 +869,22 @@ private:
         case ID_EDIT_TIME_DATE:
             editorView_.InsertAtCaret(UserDateTimeText());
             break;
+        case ID_EDIT_DUPLICATE_LINE:
+            editorView_.DuplicateLine();
+            break;
+        case ID_EDIT_DELETE_LINE:
+            editorView_.DeleteLine();
+            break;
+        case ID_EDIT_MOVE_LINE_UP:
+            editorView_.MoveLineUp();
+            break;
+        case ID_EDIT_MOVE_LINE_DOWN:
+            editorView_.MoveLineDown();
+            break;
+        case ID_FILE_RECENT_CLEAR:
+            recentFiles_.clear();
+            RebuildFileMenu();
+            break;
         case ID_FORMAT_WORD_WRAP:
             ToggleWordWrap();
             break;
@@ -813,6 +908,15 @@ private:
             break;
         case ID_VIEW_FOLLOW_TAIL:
             ToggleFollowTail();
+            break;
+        case ID_VIEW_ZOOM_IN:
+            editorView_.SetZoomPercent(editorView_.ZoomPercent() + 10);
+            break;
+        case ID_VIEW_ZOOM_OUT:
+            editorView_.SetZoomPercent(editorView_.ZoomPercent() - 10);
+            break;
+        case ID_VIEW_ZOOM_RESET:
+            editorView_.SetZoomPercent(100);
             break;
         case ID_HELP_DEFAULT_EDITOR:
             SetAsDefaultEditor();
@@ -1461,7 +1565,32 @@ private:
         return Scale(24);
     }
 
+    static std::wstring EscapeMenuText(std::wstring text) {
+        size_t i = 0;
+        while ((i = text.find(L'&', i)) != std::wstring::npos) {
+            text.insert(i, 1, L'&');
+            i += 2;
+        }
+        return text;
+    }
+
+    static std::wstring CompactPathForMenu(const std::wstring& path) {
+        constexpr size_t kMaxLength = 48;
+        if (path.size() <= kMaxLength) {
+            return path;
+        }
+        return path.substr(0, 18) + L"..." + path.substr(path.size() - (kMaxLength - 19));
+    }
+
     std::wstring MenuTextFor(UINT id) const {
+        if (id >= ID_FILE_RECENT_FIRST && id <= ID_FILE_RECENT_LAST) {
+            const size_t index = id - ID_FILE_RECENT_FIRST;
+            if (index < recentFiles_.size()) {
+                return L"&" + std::to_wstring(index + 1) + L"  " + EscapeMenuText(CompactPathForMenu(recentFiles_[index]));
+            }
+            return L"";
+        }
+
         switch (id) {
         case ID_FILE_NEW:
             return L"&New\tCtrl+N";
@@ -1477,6 +1606,8 @@ private:
             return L"&Print...\tCtrl+P";
         case ID_FILE_EXIT:
             return L"E&xit";
+        case ID_FILE_RECENT_CLEAR:
+            return L"&Clear Recent Files";
         case ID_EDIT_UNDO:
             return L"&Undo\tCtrl+Z";
         case ID_EDIT_REDO:
@@ -1503,6 +1634,14 @@ private:
             return L"Select &All\tCtrl+A";
         case ID_EDIT_TIME_DATE:
             return L"Time/&Date\tF5";
+        case ID_EDIT_DUPLICATE_LINE:
+            return L"D&uplicate Line\tCtrl+Shift+D";
+        case ID_EDIT_DELETE_LINE:
+            return L"Delete Li&ne\tCtrl+Shift+K";
+        case ID_EDIT_MOVE_LINE_UP:
+            return L"Move Line U&p\tAlt+Up";
+        case ID_EDIT_MOVE_LINE_DOWN:
+            return L"Move Line Do&wn\tAlt+Down";
         case ID_FORMAT_WORD_WRAP:
             return L"&Word Wrap";
         case ID_FORMAT_FONT:
@@ -1515,6 +1654,12 @@ private:
             return L"&Dark Mode";
         case ID_VIEW_FOLLOW_TAIL:
             return L"Follow &Tail\tF6";
+        case ID_VIEW_ZOOM_IN:
+            return L"Zoom &In\tCtrl+Plus";
+        case ID_VIEW_ZOOM_OUT:
+            return L"Zoom &Out\tCtrl+Minus";
+        case ID_VIEW_ZOOM_RESET:
+            return L"&Restore Default Zoom\tCtrl+0";
         case ID_HELP_CHECK_UPDATES:
             return L"Check for &Updates...";
         case ID_HELP_AUTO_UPDATE:
@@ -2222,6 +2367,10 @@ private:
         EnableMenuItem(menu, ID_EDIT_GO_TO, MF_BYCOMMAND | (hasText ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_EDIT_SELECT_ALL, MF_BYCOMMAND | (hasText ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_EDIT_TIME_DATE, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(menu, ID_EDIT_DUPLICATE_LINE, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(menu, ID_EDIT_DELETE_LINE, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(menu, ID_EDIT_MOVE_LINE_UP, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(menu, ID_EDIT_MOVE_LINE_DOWN, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_FILE_SAVE, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_FILE_SAVE_AS, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_FILE_PRINT, MF_BYCOMMAND | (!readOnlyPreview_ ? MF_ENABLED : MF_GRAYED));
@@ -2398,6 +2547,7 @@ private:
         }
 
         statusText_ = status;
+        statusText_ += L"    " + std::to_wstring(editorView_.ZoomPercent()) + L"%";
         if (followTail_) {
             statusText_ += L"    FOLLOW TAIL";
         }
@@ -2488,6 +2638,7 @@ private:
             dirty_ = false;
             CancelRecoveryJournal();
             RecordFileStamp();
+            AddRecentFile(currentPath_);
             UpdateTitle();
             UpdateStatus();
             SetFocus(editor_);
@@ -2511,6 +2662,7 @@ private:
         dirty_ = false;
         CancelRecoveryJournal();
         RecordFileStamp();
+        AddRecentFile(currentPath_);
         UpdateTitle();
         UpdateStatus();
         SetFocus(editor_);
@@ -2809,6 +2961,7 @@ private:
         dirty_ = false;
         CancelRecoveryJournal();
         RecordFileStamp();
+        AddRecentFile(currentPath_);
         UpdateTitle();
         UpdateStatus();
         return true;
@@ -2867,6 +3020,7 @@ private:
     RECT pageMarginsThousandths_{1000, 1000, 1000, 1000};
     RECT savedWindowRect_{};
     NativePad::RecoveryJournal recoveryJournal_;
+    std::vector<std::wstring> recentFiles_;
     std::optional<FileStamp> fileStamp_;
     uint64_t fileByteCount_{0};
     size_t previewDecodedByteCount_{0};
@@ -2947,6 +3101,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         {FVIRTKEY | FCONTROL, 'A', ID_EDIT_SELECT_ALL},
         {FVIRTKEY, VK_F5, ID_EDIT_TIME_DATE},
         {FVIRTKEY, VK_F6, ID_VIEW_FOLLOW_TAIL},
+        {FVIRTKEY | FCONTROL | FSHIFT, 'D', ID_EDIT_DUPLICATE_LINE},
+        {FVIRTKEY | FCONTROL | FSHIFT, 'K', ID_EDIT_DELETE_LINE},
+        {FVIRTKEY | FALT, VK_UP, ID_EDIT_MOVE_LINE_UP},
+        {FVIRTKEY | FALT, VK_DOWN, ID_EDIT_MOVE_LINE_DOWN},
+        {FVIRTKEY | FCONTROL, VK_OEM_PLUS, ID_VIEW_ZOOM_IN},
+        {FVIRTKEY | FCONTROL, VK_ADD, ID_VIEW_ZOOM_IN},
+        {FVIRTKEY | FCONTROL, VK_OEM_MINUS, ID_VIEW_ZOOM_OUT},
+        {FVIRTKEY | FCONTROL, VK_SUBTRACT, ID_VIEW_ZOOM_OUT},
+        {FVIRTKEY | FCONTROL, '0', ID_VIEW_ZOOM_RESET},
+        {FVIRTKEY | FCONTROL, VK_NUMPAD0, ID_VIEW_ZOOM_RESET},
     };
 
     HACCEL acceleratorTable = CreateAcceleratorTableW(accelerators, static_cast<int>(std::size(accelerators)));

@@ -242,6 +242,29 @@ const EditorFontSpec& EditorView::Font() const noexcept {
     return font_;
 }
 
+void EditorView::SetZoomPercent(int percent) {
+    // Zoom scales the rendered text only; font_ keeps the user's chosen size so
+    // the Font dialog and persisted preferences never see a zoomed value.
+    percent = std::clamp(percent, 10, 500);
+    if (percent == zoomPercent_) {
+        return;
+    }
+
+    zoomPercent_ = percent;
+    RecreateTextFormat();
+    InvalidateVisualRowCache();
+    ScrollToCaret();
+    UpdateScrollbars();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (parent_ != nullptr) {
+        SendMessageW(parent_, WM_EDITOR_ZOOM_CHANGED, 0, 0);
+    }
+}
+
+int EditorView::ZoomPercent() const noexcept {
+    return zoomPercent_;
+}
+
 void EditorView::SetWordWrap(bool enabled) {
     if (wordWrap_ == enabled) {
         return;
@@ -721,13 +744,14 @@ void EditorView::RecreateTextFormat() {
 
     impl_->textFormat.Reset();
     impl_->lineNumberFormat.Reset();
+    const float renderedSize = std::max(1.0f, font_.sizeDips * static_cast<float>(zoomPercent_) / 100.0f);
     if (SUCCEEDED(impl_->dwriteFactory->CreateTextFormat(
             font_.family.c_str(),
             nullptr,
             static_cast<DWRITE_FONT_WEIGHT>(font_.weight),
             font_.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            font_.sizeDips,
+            renderedSize,
             L"",
             impl_->textFormat.GetAddressOf()))) {
         impl_->textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -737,7 +761,7 @@ void EditorView::RecreateTextFormat() {
                 static_cast<DWRITE_FONT_WEIGHT>(font_.weight),
                 font_.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
-                font_.sizeDips,
+                renderedSize,
                 L"",
                 impl_->lineNumberFormat.GetAddressOf()))) {
             impl_->lineNumberFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -1234,6 +1258,11 @@ void EditorView::OnMouseMove(int x, int y) {
 }
 
 void EditorView::OnMouseWheel(short delta) {
+    if (GetKeyState(VK_CONTROL) & 0x8000) {
+        SetZoomPercent(zoomPercent_ + (delta > 0 ? 10 : -10));
+        return;
+    }
+
     const int lines = std::max(1, std::abs(delta) / WHEEL_DELTA * 3);
     if (wordWrap_) {
         const std::size_t visibleLines = std::max<std::size_t>(1, static_cast<std::size_t>(ClientHeightDips() / std::max(1.0f, lineHeight_)));
@@ -1703,6 +1732,117 @@ void EditorView::Delete() {
 
 void EditorView::InsertAtCaret(std::wstring text) {
     InsertText(std::move(text));
+}
+
+std::wstring EditorView::LineBreakForLine(std::size_t line) const {
+    // Reuse the break the document already uses next to this line so line
+    // operations never introduce a foreign line-ending style.
+    const std::size_t lineCount = IndexedLineCount();
+    if (line + 1 < lineCount) {
+        const std::size_t end = LineEnd(line);
+        return DocumentTextRange(end, LineStart(line + 1) - end);
+    }
+    if (line > 0) {
+        const std::size_t end = LineEnd(line - 1);
+        return DocumentTextRange(end, LineStart(line) - end);
+    }
+    return L"\r\n";
+}
+
+void EditorView::DuplicateLine() {
+    if (readOnly_ || document_ == nullptr) {
+        return;
+    }
+
+    const std::size_t line = LineFromPosition(caret_);
+    const std::size_t start = LineStart(line);
+    const std::size_t column = caret_ - start;
+    std::wstring text = DocumentTextRange(start, LineEnd(line) - start);
+
+    // Insert the copy above so the caret stays on the original line's text.
+    ApplyEdit(start, 0, text + LineBreakForLine(line), true);
+    SetCaret(caret_ + column, false);
+}
+
+void EditorView::DeleteLine() {
+    if (readOnly_ || document_ == nullptr) {
+        return;
+    }
+
+    const std::size_t lineCount = IndexedLineCount();
+    const std::size_t line = LineFromPosition(caret_);
+    const std::size_t start = LineStart(line);
+    const std::size_t column = caret_ - start;
+
+    std::size_t eraseStart = start;
+    std::size_t eraseEnd;
+    if (line + 1 < lineCount) {
+        eraseEnd = LineStart(line + 1);
+    } else {
+        // The last line has no trailing break, so remove the preceding one too.
+        eraseEnd = DocumentLength();
+        if (line > 0) {
+            eraseStart = LineEnd(line - 1);
+        }
+    }
+
+    if (eraseEnd == eraseStart) {
+        return;
+    }
+
+    ApplyEdit(eraseStart, eraseEnd - eraseStart, L"", true);
+
+    const std::size_t newLine = LineFromPosition(caret_);
+    SetCaret(std::min(LineStart(newLine) + column, LineEnd(newLine)), false);
+}
+
+void EditorView::MoveLineUp() {
+    if (readOnly_ || document_ == nullptr) {
+        return;
+    }
+
+    const std::size_t line = LineFromPosition(caret_);
+    if (line == 0) {
+        return;
+    }
+
+    const std::size_t column = caret_ - LineStart(line);
+    SwapAdjacentLines(line - 1);
+    SetCaret(std::min(LineStart(line - 1) + column, LineEnd(line - 1)), false);
+}
+
+void EditorView::MoveLineDown() {
+    if (readOnly_ || document_ == nullptr) {
+        return;
+    }
+
+    const std::size_t line = LineFromPosition(caret_);
+    if (line + 1 >= IndexedLineCount()) {
+        return;
+    }
+
+    const std::size_t column = caret_ - LineStart(line);
+    SwapAdjacentLines(line);
+    SetCaret(std::min(LineStart(line + 1) + column, LineEnd(line + 1)), false);
+}
+
+void EditorView::SwapAdjacentLines(std::size_t upperLine) {
+    // Swap the two line texts while keeping every break character where it is,
+    // so the document's final missing-newline shape is preserved when the last
+    // line is involved.
+    const std::size_t lowerLine = upperLine + 1;
+    const std::size_t regionStart = LineStart(upperLine);
+    const std::size_t upperEnd = LineEnd(upperLine);
+    const std::size_t lowerStart = LineStart(lowerLine);
+    const std::size_t lowerEnd = LineEnd(lowerLine);
+    const std::size_t regionEnd = lowerLine + 1 < IndexedLineCount() ? LineStart(lowerLine + 1) : DocumentLength();
+
+    const std::wstring upperText = DocumentTextRange(regionStart, upperEnd - regionStart);
+    const std::wstring upperBreak = DocumentTextRange(upperEnd, lowerStart - upperEnd);
+    const std::wstring lowerText = DocumentTextRange(lowerStart, lowerEnd - lowerStart);
+    const std::wstring lowerBreak = DocumentTextRange(lowerEnd, regionEnd - lowerEnd);
+
+    ApplyEdit(regionStart, regionEnd - regionStart, lowerText + upperBreak + upperText + lowerBreak, true);
 }
 
 void EditorView::GoToLine(std::size_t line) {

@@ -46,7 +46,21 @@ dialogs, printing, DPI changes, and real-world file handling.
 - Replace All reports the replacement count.
 - Esc closes Find/Replace dialogs without losing the editor selection.
 
+## Recent Files and Line Operations
+
+- Opening files populates the File-menu recent list, most recent first, with no
+  duplicates and capped at eight entries.
+- The recent list persists across restarts and survives via the INI.
+- Selecting a recent entry prompts to save a dirty document first; a recent
+  entry whose file no longer exists is removed after the failed open.
+- Clear Recent Files empties the list.
+- Ctrl+Shift+D duplicates the caret line; Ctrl+Shift+K deletes it; Alt+Up and
+  Alt+Down move it; each is a single undo step and preserves line endings.
+
 ## Format and View
+
+- Ctrl+mouse-wheel, Ctrl+Plus/Minus, and Ctrl+0 zoom the editor; the status bar
+  shows the current percentage and the saved font size is unchanged.
 
 - Word Wrap toggles without corrupting scroll position.
 - Go To and status-bar line count remain available while Word Wrap is enabled.

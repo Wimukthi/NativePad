@@ -14,6 +14,8 @@ of very large text files.
 - Per-monitor v2 DPI awareness.
 - Classic Notepad-style menus, accelerators, status bar, context menu, find,
   replace, go to, font, line numbers, page setup, and print workflows.
+- Recent files list, editor zoom (Ctrl+scroll, Ctrl+Plus/Minus, Ctrl+0), and
+  line operations (duplicate, delete, move up/down).
 - Editable normal-file path using a piece-table document buffer.
 - Read-only memory-mapped large-file path for files above the editable limit.
 - External change detection with a reload prompt, and a Follow Tail mode (F6)

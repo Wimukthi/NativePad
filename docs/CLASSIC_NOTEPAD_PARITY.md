@@ -14,6 +14,9 @@ NativePad targets feature parity with the last classic, menu-driven Windows Note
 - Find, Find Next, Find Previous, Replace, Go To, Time/Date, Word Wrap, Font,
   Line Numbers, Page Setup, Print, Status Bar toggle, editor right-click context
   menu, and About.
+- Recent files list, editor zoom (Ctrl+scroll, Ctrl+Plus/Minus, Ctrl+0), and
+  line operations (duplicate, delete, move up/down) as modern-Notepad-aligned
+  conveniences.
 - UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI fallback loading; Save preserves
   detected encoding and line endings where representable.
 - Memory-mapped normal file loading and a read-only mapped backend for files above the editable limit.
@@ -135,10 +138,10 @@ Acceptance:
 
 ## Manual parity checklist
 
-- File: New, Open, Save, Save As, Page Setup, Print, Exit.
-- Edit: Undo, Cut, Copy, Paste, Delete, Find, Find Next, Find Previous, Replace, Go To, Select All, Time/Date.
+- File: New, Open, Save, Save As, Recent Files, Page Setup, Print, Exit.
+- Edit: Undo, Cut, Copy, Paste, Delete, Find, Find Next, Find Previous, Replace, Go To, Select All, Time/Date, Duplicate/Delete Line, Move Line Up/Down.
 - Format: Word Wrap, Font.
-- View: Line Numbers, Status Bar.
+- View: Zoom In/Out/Restore, Line Numbers, Status Bar.
 - Help: About.
 - Behavior: dirty prompts, command-line open, drag/drop open, dark/light mode,
   read-only mapped viewing, encoding load/save and Save As encoding changes,

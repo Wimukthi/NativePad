@@ -10,6 +10,7 @@ This table describes the current implementation state, not the final target.
 | Open | Done | Common file dialog, drag/drop, command-line path |
 | Save | Done | Preserves detected encoding and line endings for editable documents |
 | Save As | Done | Native save dialog with encoding picker |
+| Recent Files | Done | Up to 8 most-recently opened files listed inline in the File menu, persisted in the INI; missing files are pruned on use; includes Clear Recent Files |
 | Page Setup | Done | Native page setup dialog |
 | Print | Done | Native print dialog; pagination/spooling on worker thread |
 | Exit | Done | Dirty prompt |
@@ -28,6 +29,8 @@ This table describes the current implementation state, not the final target.
 | Go To | Done | Custom dark-aware dialog; available regardless of Word Wrap |
 | Select All | Done | Works on editable and mapped documents |
 | Time/Date | Done | Inserts localized time/date into editable documents |
+| Duplicate/Delete Line | Done | Ctrl+Shift+D duplicates the caret line; Ctrl+Shift+K deletes it; single undo step |
+| Move Line Up/Down | Done | Alt+Up / Alt+Down swap the caret line with its neighbor, preserving line endings; single undo step |
 | Context menu | Done | Editor right-click menu |
 
 ## Format and View
@@ -39,6 +42,7 @@ This table describes the current implementation state, not the final target.
 | Line Numbers | Done | Optional visual gutter; persisted; excluded from save/copy/search/print |
 | Status Bar | Done | Toggleable; shows line, column, total lines, encoding, and character count |
 | Dark Mode | Done | System default plus manual View toggle |
+| Zoom | Done | Ctrl+scroll, Ctrl+Plus/Minus, and Ctrl+0 to restore; 10%–500%; shown as a percentage in the status bar; scales rendering only, not the saved font size |
 | Follow Tail | Done | View menu/F6; polls the open file and follows appended content, keeping the caret at the end. Mapped large files refresh incrementally; editable files reload from disk and stay read-only while following |
 
 ## Help and System Integration
@@ -58,7 +62,7 @@ This table describes the current implementation state, not the final target.
 | ANSI fallback load | Done | Used when UTF-8 decode fails |
 | Save encoding | Done | Preserves UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI where representable; Save As can change encoding |
 | Line-ending preservation | Done | CRLF/LF/CR files normalize back to detected style; mixed files are left mixed |
-| Preferences | Done | INI-backed persistence for dark override, word wrap, line numbers, status bar, font, window placement, page margins, update URL, and update-check preference |
+| Preferences | Done | INI-backed persistence for dark override, word wrap, line numbers, status bar, font, window placement, page margins, recent files, update URL, and update-check preference |
 | Large-file viewing | Done | Read-only mapped backend above editable limit |
 | Large-file editing | Not done | Requires new storage model |
 | External change detection | Done | On window activation, prompts to reload when the open file changed on disk; warns before discarding unsaved edits |

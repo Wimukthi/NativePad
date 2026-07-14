@@ -16,6 +16,7 @@ class MappedTextDocument;
 
 constexpr UINT WM_EDITOR_CHANGED = WM_APP + 101;
 constexpr UINT WM_EDITOR_CURSOR_CHANGED = WM_APP + 102;
+constexpr UINT WM_EDITOR_ZOOM_CHANGED = WM_APP + 103;
 
 struct EditorTheme {
     COLORREF background{};
@@ -52,6 +53,8 @@ public:
     void SetTheme(EditorTheme theme);
     void SetFont(EditorFontSpec font);
     [[nodiscard]] const EditorFontSpec& Font() const noexcept;
+    void SetZoomPercent(int percent);
+    [[nodiscard]] int ZoomPercent() const noexcept;
     void SetWordWrap(bool enabled);
     [[nodiscard]] bool WordWrap() const noexcept;
     void SetShowLineNumbers(bool enabled);
@@ -67,6 +70,10 @@ public:
     void Paste();
     void Delete();
     void InsertAtCaret(std::wstring text);
+    void DuplicateLine();
+    void DeleteLine();
+    void MoveLineUp();
+    void MoveLineDown();
     void SelectRange(std::size_t start, std::size_t length);
     void GoToLine(std::size_t line);
     void SelectAll();
@@ -151,6 +158,8 @@ private:
     std::size_t LineLength(std::size_t line) const;
     std::size_t LineFromPosition(std::size_t position) const;
     std::size_t PositionFromLineColumn(std::size_t line, std::size_t column) const;
+    std::wstring LineBreakForLine(std::size_t line) const;
+    void SwapAdjacentLines(std::size_t upperLine);
     void SelectWordAt(std::size_t position);
     void SelectLineAtPosition(std::size_t position);
     bool IsTripleClick(int x, int y, DWORD now) const noexcept;
@@ -201,6 +210,7 @@ private:
     POINT lastDoubleClickPoint_{};
     DWORD lastDoubleClickTick_{0};
     UINT dpi_{USER_DEFAULT_SCREEN_DPI};
+    int zoomPercent_{100};
     float lineHeight_{18.0f};
     float charWidth_{8.0f};
     mutable std::size_t visualRowCacheColumns_{0};
