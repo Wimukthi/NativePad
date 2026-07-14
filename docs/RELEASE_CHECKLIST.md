@@ -87,6 +87,10 @@ dialogs, printing, DPI changes, and real-world file handling.
   editor I-beam.
 - Moving between 100%, 125%, 150%, and 200% DPI monitors keeps text, menus,
   dialogs, and scrollbars correctly sized.
+- Disconnecting the monitor that holds the window moves it back onto the primary
+  monitor instead of leaving it off-screen, for both normal and maximized
+  windows. Launching with a saved position on a now-absent monitor also lands
+  on the primary monitor.
 - Startup and wake-from-sleep repaint directly to the active theme without a
   white editor surface persisting.
 

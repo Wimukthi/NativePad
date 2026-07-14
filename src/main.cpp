@@ -279,6 +279,9 @@ public:
             actualShowCommand = SW_SHOWMAXIMIZED;
         }
         ShowWindow(hwnd_, actualShowCommand);
+        // A restored rect can point at a monitor that no longer exists, so make
+        // sure the window is not launched off-screen.
+        EnsureWindowOnVisibleMonitor();
         UpdateWindow(hwnd_);
         return true;
     }
@@ -2444,9 +2447,56 @@ private:
         DeleteObject(background);
     }
 
+    void EnsureWindowOnVisibleMonitor() {
+        // When the monitor a window sits on is disconnected, Windows does not
+        // always pull the window back onto a surviving display. Detect a window
+        // that no longer intersects any monitor and recenter it on the primary
+        // monitor's work area so it cannot become stranded off-screen.
+        if (hwnd_ == nullptr || IsIconic(hwnd_)) {
+            return;
+        }
+
+        if (MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONULL) != nullptr) {
+            return;
+        }
+
+        MONITORINFO primary{};
+        primary.cbSize = sizeof(primary);
+        if (!GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &primary)) {
+            return;
+        }
+
+        const RECT work = primary.rcWork;
+        const int workWidth = work.right - work.left;
+        const int workHeight = work.bottom - work.top;
+
+        WINDOWPLACEMENT placement{};
+        placement.length = sizeof(placement);
+        const bool maximized = GetWindowPlacement(hwnd_, &placement) && placement.showCmd == SW_SHOWMAXIMIZED;
+
+        RECT frame{};
+        GetWindowRect(hwnd_, &frame);
+        int newWidth = std::clamp<int>(frame.right - frame.left, 320, workWidth);
+        int newHeight = std::clamp<int>(frame.bottom - frame.top, 240, workHeight);
+        const int left = work.left + std::max(0, (workWidth - newWidth) / 2);
+        const int top = work.top + std::max(0, (workHeight - newHeight) / 2);
+
+        if (maximized) {
+            // A maximized window ignores position changes, so restore it, move
+            // the restored frame onto the primary monitor, then re-maximize
+            // there.
+            ShowWindow(hwnd_, SW_RESTORE);
+        }
+        SetWindowPos(hwnd_, nullptr, left, top, newWidth, newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+        if (maximized) {
+            ShowWindow(hwnd_, SW_SHOWMAXIMIZED);
+        }
+    }
+
     void RefreshAfterDisplaySurfaceChange() {
         // After sleep or display-driver resets, D2D HWND targets can keep a
         // stale or white back buffer until forced through a full repaint cycle.
+        EnsureWindowOnVisibleMonitor();
         if (!darkModeForced_) {
             darkMode_ = IsSystemDarkMode();
         }
