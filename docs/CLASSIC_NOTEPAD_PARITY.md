@@ -19,9 +19,9 @@ NativePad targets feature parity with the last classic, menu-driven Windows Note
   conveniences.
 - UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI fallback loading; Save preserves
   detected encoding and line endings where representable.
-- Memory-mapped normal file loading and a read-only mapped backend for files above the editable limit.
-- Remaining gaps are editable large-file storage and broader print fidelity
-  validation against classic Notepad.
+- Memory-mapped normal file loading, a read-only mapped backend for files above the editable limit, and an opt-in editable piece-table-over-mmap backend for large files.
+- Remaining gaps are broader print fidelity validation against classic Notepad
+  and large-file printing/encoding-conversion support.
 
 ## Phase 1: Core classic command parity
 

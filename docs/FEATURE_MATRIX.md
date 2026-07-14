@@ -64,12 +64,15 @@ This table describes the current implementation state, not the final target.
 | Line-ending preservation | Done | CRLF/LF/CR files normalize back to detected style; mixed files are left mixed |
 | Preferences | Done | INI-backed persistence for dark override, word wrap, line numbers, status bar, font, window placement, page margins, recent files, update URL, and update-check preference |
 | Large-file viewing | Done | Read-only mapped backend above editable limit |
-| Large-file editing | Not done | Requires new storage model |
+| Large-file editing | Done | Edit > Enable Large-File Editing reopens the file through a piece-table-over-mmap backend; supports typing, paste, undo/redo, find, and save. Printing, crash-recovery journaling, and Save As encoding conversion are not supported for large files |
 | External change detection | Done | On window activation, prompts to reload when the open file changed on disk; warns before discarding unsaved edits |
 | Crash recovery | Done | Dirty editable documents are journaled to `%LOCALAPPDATA%\NativePad\Recovery` every few seconds; abandoned journals are offered for restore on the next launch |
 
 ## Known Limitations
 
-- Mapped large files are read-only.
-- UTF-8/ANSI mapped files use byte offsets internally.
+- Large files open read-only; editing is opt-in via Edit > Enable Large-File Editing.
+- UTF-8/ANSI mapped and large-file backends use byte offsets internally, so caret
+  navigation is not grapheme-aware.
+- Editable large files do not support printing, crash-recovery journaling, or
+  encoding conversion on Save As.
 - Print fidelity needs more manual testing against classic Notepad behavior.

@@ -21,7 +21,8 @@ behavior remain explicit.
 | Editor control | `src/EditorView.h`, `src/EditorView.cpp` | DirectWrite rendering, caret/selection, scrolling, input, clipboard, undo/redo |
 | Editable document | `src/DocumentBuffer.h`, `src/DocumentBuffer.cpp` | Piece-table storage for normal editable files |
 | Line index | `src/LineIndex.h`, `src/LineIndex.cpp` | Logical line starts for editable documents |
-| Large-file document | `src/MappedTextDocument.h`, `src/MappedTextDocument.cpp` | Read-only memory-mapped text access and line/search indexing |
+| Large-file document (read-only) | `src/MappedTextDocument.h`, `src/MappedTextDocument.cpp` | Read-only memory-mapped text access and line/search indexing |
+| Large-file document (editable) | `src/LargeTextDocument.h`, `src/LargeTextDocument.cpp` | Piece table over the memory-mapped original plus an in-memory add buffer; editable without decoding the whole file |
 | Text format helpers | `src/TextFormat.h`, `src/TextFormat.cpp` | Encoding labels, line-ending detection, normalization, and save encoding |
 | Resources/manifest | `src/NativePad.rc`, `src/resource.h`, `src/app.manifest` | Version metadata, command IDs, visual styles, DPI awareness |
 | Tests | `tests/*.cpp` | Dependency-free executable tests |
@@ -66,14 +67,22 @@ Open records the detected encoding and line-ending policy. Save preserves that
 encoding where possible and normalizes CRLF/LF/CR-only files back to their
 detected line ending. Mixed-line files are left mixed.
 
-Large files above `kReadChunkLimit` currently open through `MappedTextDocument`.
-That backend is read-only. It maps the file, builds a line-start table, and
-serves visible ranges on demand.
+Large files above `kReadChunkLimit` open through `MappedTextDocument`. That
+backend is read-only. It maps the file, builds a line-start table, and serves
+visible ranges on demand. Choosing **Edit > Enable Large-File Editing** reopens
+the file through `LargeTextDocument`, an editable piece table over the mapped
+original (see [Large Files](LARGE_FILES.md)); the read-only view stays the
+default so the fast viewing and Follow Tail paths are unaffected.
 
-`EditorView` can point at either:
+`EditorView` can point at one of three backends:
 
-- `DocumentBuffer* document_`
-- `MappedTextDocument* mappedDocument_`
+- `DocumentBuffer* document_` (editable UTF-16 buffer)
+- `MappedTextDocument* mappedDocument_` (read-only large file)
+- `LargeTextDocument* largeDocument_` (editable large file)
+
+The editable UTF-16 buffer and byte-backed large document differ in coordinate
+units, so all editing funnels through `EditorView::BackendReplace`, which
+records undo/redo in document units rather than assuming UTF-16 code units.
 
 All paint, hit-test, caret, selection, and scroll code goes through helper
 methods such as `DocumentLength`, `DocumentTextRange`, `IndexedLineCount`, and

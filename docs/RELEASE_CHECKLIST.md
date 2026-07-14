@@ -142,6 +142,20 @@ dialogs, printing, DPI changes, and real-world file handling.
   disabled for mapped read-only files.
 - Copy, Select All, Find, Find Next/Previous, and Go To work on mapped files.
 
+## Editable Large Files
+
+- Edit > Enable Large-File Editing is enabled only for a read-only mapped large
+  file, and switching shows `[Large file]` in the title and `LARGE FILE` in the
+  status bar.
+- After enabling, typing, paste, cut, delete, undo/redo, find, and replace work.
+- Save writes the edited content back, and reopening the file shows the change;
+  the file is replaced atomically (no truncated file if the save is interrupted).
+- Save As writes a new file in the document's encoding.
+- Editing near multibyte UTF-8 characters never corrupts them (erase snaps to
+  code-point boundaries).
+- Printing and Save As encoding conversion are disabled for large files.
+- Opening another file or File > New releases the large-file mapping.
+
 ## Printing
 
 - Page Setup opens and persists margins.

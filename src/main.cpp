@@ -33,6 +33,7 @@
 #include "FindReplaceDialog.h"
 #include "FontDialog.h"
 #include "GoToDialog.h"
+#include "LargeTextDocument.h"
 #include "MappedTextDocument.h"
 #include "MessageDialog.h"
 #include "PopupMenu.h"
@@ -712,6 +713,8 @@ private:
         AppendMenuCommand(editMenu_, ID_EDIT_DELETE_LINE);
         AppendMenuCommand(editMenu_, ID_EDIT_MOVE_LINE_UP);
         AppendMenuCommand(editMenu_, ID_EDIT_MOVE_LINE_DOWN);
+        AppendMenuSeparator(editMenu_);
+        AppendMenuCommand(editMenu_, ID_EDIT_ENABLE_LARGE_EDIT);
 
         formatMenu_ = CreatePopupMenu();
         AppendMenuCommand(formatMenu_, ID_FORMAT_WORD_WRAP);
@@ -883,6 +886,9 @@ private:
             break;
         case ID_EDIT_MOVE_LINE_DOWN:
             editorView_.MoveLineDown();
+            break;
+        case ID_EDIT_ENABLE_LARGE_EDIT:
+            EnableLargeFileEditing();
             break;
         case ID_FILE_RECENT_CLEAR:
             recentFiles_.clear();
@@ -1645,6 +1651,8 @@ private:
             return L"Move Line U&p\tAlt+Up";
         case ID_EDIT_MOVE_LINE_DOWN:
             return L"Move Line Do&wn\tAlt+Down";
+        case ID_EDIT_ENABLE_LARGE_EDIT:
+            return L"Enable Large-File &Editing";
         case ID_FORMAT_WORD_WRAP:
             return L"&Word Wrap";
         case ID_FORMAT_FONT:
@@ -2337,11 +2345,18 @@ private:
     }
 
     size_t DocumentLength() const noexcept {
+        if (largeDocument_ != nullptr) {
+            return largeDocument_->Length();
+        }
         return mappedDocument_ != nullptr ? mappedDocument_->Length() : document_.Length();
     }
 
     bool IsMappedLargeFile() const noexcept {
         return mappedDocument_ != nullptr;
+    }
+
+    bool IsLargeEditable() const noexcept {
+        return largeDocument_ != nullptr;
     }
 
     void UpdateMenuState(HMENU menu) const {
@@ -2374,9 +2389,13 @@ private:
         EnableMenuItem(menu, ID_EDIT_DELETE_LINE, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_EDIT_MOVE_LINE_UP, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_EDIT_MOVE_LINE_DOWN, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
+        // Enabling editing only applies to a read-only mapped large file.
+        EnableMenuItem(menu, ID_EDIT_ENABLE_LARGE_EDIT, MF_BYCOMMAND | (IsMappedLargeFile() ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_FILE_SAVE, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         EnableMenuItem(menu, ID_FILE_SAVE_AS, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
-        EnableMenuItem(menu, ID_FILE_PRINT, MF_BYCOMMAND | (!readOnlyPreview_ ? MF_ENABLED : MF_GRAYED));
+        // Printing is not supported for read-only previews or editable large
+        // files (whole-document pagination would materialize the entire file).
+        EnableMenuItem(menu, ID_FILE_PRINT, MF_BYCOMMAND | (!readOnlyPreview_ && !IsLargeEditable() ? MF_ENABLED : MF_GRAYED));
         CheckMenuItem(menu, ID_FORMAT_WORD_WRAP, MF_BYCOMMAND | (editorView_.WordWrap() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_LINE_NUMBERS, MF_BYCOMMAND | (editorView_.ShowLineNumbers() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_STATUS_BAR, MF_BYCOMMAND | (statusBarVisible_ ? MF_CHECKED : MF_UNCHECKED));
@@ -2514,6 +2533,8 @@ private:
         title += currentPath_.empty() ? kUntitled : BaseName(currentPath_);
         if (IsMappedLargeFile()) {
             title += L" [Read-only mapped]";
+        } else if (IsLargeEditable()) {
+            title += L" [Large file]";
         } else if (readOnlyPreview_) {
             title += L" [Read-only preview]";
         }
@@ -2525,7 +2546,7 @@ private:
     }
 
     std::wstring EditorText() const {
-        if (mappedDocument_ != nullptr) {
+        if (mappedDocument_ != nullptr || largeDocument_ != nullptr) {
             return {};
         }
         return document_.Text();
@@ -2533,6 +2554,7 @@ private:
 
     void SetEditorText(const std::wstring& text, bool readOnlyPreview = false) {
         mappedDocument_.reset();
+        largeDocument_.reset();
         document_.Reset(text);
         readOnlyPreview_ = readOnlyPreview;
         editorView_.SetDocument(&document_);
@@ -2540,14 +2562,27 @@ private:
     }
 
     void SetMappedEditorDocument(std::unique_ptr<NativePad::MappedTextDocument> document) {
-        // Large files are view/search-only for now. Reset the editable buffer so
+        // The mapped backend is view/search-only. Reset the other backends so
         // accidental save/replace paths cannot operate on stale text.
         document_.Reset();
+        largeDocument_.reset();
         mappedDocument_ = std::move(document);
         readOnlyPreview_ = true;
         previewDecodedByteCount_ = 0;
         editorView_.SetMappedDocument(mappedDocument_.get());
         editorView_.SetReadOnly(true);
+    }
+
+    void SetLargeEditorDocument(std::unique_ptr<NativePad::LargeTextDocument> document) {
+        // The editable large-file backend keeps the file mapped read-only and
+        // stores edits in a piece table over an in-memory add buffer.
+        document_.Reset();
+        mappedDocument_.reset();
+        largeDocument_ = std::move(document);
+        readOnlyPreview_ = false;
+        previewDecodedByteCount_ = 0;
+        editorView_.SetLargeDocument(largeDocument_.get());
+        editorView_.SetReadOnly(false);
     }
 
     void UpdateStatus() {
@@ -2566,6 +2601,17 @@ private:
                 status,
                 std::size(status),
                 L"Ln %llu, Col %llu    Lines %llu    %s    READ-ONLY MAPPED    %llu MB    %llu chars",
+                line,
+                column,
+                lineCount,
+                encodingLabel_.c_str(),
+                static_cast<unsigned long long>(fileByteCount_ / (1024u * 1024u)),
+                documentLength);
+        } else if (IsLargeEditable()) {
+            StringCchPrintfW(
+                status,
+                std::size(status),
+                L"Ln %llu, Col %llu    Lines %llu    %s    LARGE FILE    %llu MB    %llu chars",
                 line,
                 column,
                 lineCount,
@@ -2724,11 +2770,11 @@ private:
     }
 
     void ScheduleRecoverySave() {
-        // Journal only editable documents; mapped and preview files are
-        // read-only, so there is never unsaved work to protect. The timer is
-        // not reset on every keystroke so continuous typing still journals at
-        // most once per delay window.
-        if (recoverySavePending_ || readOnlyPreview_ || IsMappedLargeFile()) {
+        // Journal only normal editable documents; read-only files have no unsaved
+        // work, and journaling a multi-gigabyte large-file edit is impractical.
+        // The timer is not reset on every keystroke so continuous typing still
+        // journals at most once per delay window.
+        if (recoverySavePending_ || readOnlyPreview_ || IsMappedLargeFile() || IsLargeEditable()) {
             return;
         }
 
@@ -2740,7 +2786,7 @@ private:
         KillTimer(hwnd_, kRecoveryTimerId);
         recoverySavePending_ = false;
 
-        if (!dirty_ || readOnlyPreview_ || IsMappedLargeFile()) {
+        if (!dirty_ || readOnlyPreview_ || IsMappedLargeFile() || IsLargeEditable()) {
             return;
         }
 
@@ -2975,9 +3021,13 @@ private:
     }
 
     bool SaveDocument(bool saveAs) {
+        if (IsLargeEditable()) {
+            return SaveLargeDocument(saveAs);
+        }
+
         if (readOnlyPreview_) {
             const wchar_t* message = IsMappedLargeFile()
-                                         ? L"This file is opened through the read-only large-file mapper. Saving is disabled until editable large-file storage is implemented."
+                                         ? L"This file is opened through the read-only large-file viewer. Choose Edit > Enable Large-File Editing to make changes."
                                          : L"This is a read-only large-file preview. NativePad is showing only the initial chunk, so saving is disabled.";
             ShowAppMessage(message, MessageDialogIcon::Information);
             return false;
@@ -3010,6 +3060,98 @@ private:
         encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
         dirty_ = false;
         CancelRecoveryJournal();
+        RecordFileStamp();
+        AddRecentFile(currentPath_);
+        UpdateTitle();
+        UpdateStatus();
+        return true;
+    }
+
+    void EnableLargeFileEditing() {
+        // Reopen the currently viewed read-only large file through the editable
+        // piece-table backend. The mapped viewer stays the default so the fast
+        // read-only and Follow Tail paths are unaffected until the user opts in.
+        if (!IsMappedLargeFile() || currentPath_.empty()) {
+            return;
+        }
+
+        auto large = std::make_unique<NativePad::LargeTextDocument>();
+        std::wstring error;
+        if (!large->Open(currentPath_, error)) {
+            ShowAppMessage(L"Could not enable editing for this file:\n\n" + error, MessageDialogIcon::Error);
+            return;
+        }
+
+        const size_t caret = editorView_.CaretPosition();
+        StopFollowTail();
+        encodingLabel_ = large->EncodingLabel();
+        documentEncoding_ = large->Encoding();
+        documentLineEnding_ = large->DetectedLineEnding();
+        fileByteCount_ = large->FileByteCount();
+        SetLargeEditorDocument(std::move(large));
+        editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
+        dirty_ = false;
+        RecordFileStamp();
+        UpdateTitle();
+        UpdateStatus();
+        SetFocus(editor_);
+    }
+
+    bool SaveLargeDocument(bool saveAs) {
+        std::wstring targetPath = currentPath_;
+        if (saveAs) {
+            // Save As writes in the document's own encoding; the encoding picker
+            // does not re-encode a large file in this version.
+            auto selected = ShowSaveDialog(hwnd_, targetPath, documentEncoding_);
+            if (!selected) {
+                return false;
+            }
+            targetPath = selected->path;
+        }
+        if (targetPath.empty()) {
+            return false;
+        }
+
+        // Stage the new content beside the target so the replace is atomic, then
+        // unmap the original before swapping it in and reopening from disk.
+        std::wstring error;
+        const std::wstring stagingPath = targetPath + L".np-save";
+        if (!largeDocument_->SaveTo(stagingPath, error)) {
+            ShowAppMessage(L"Could not save file:\n\n" + error, MessageDialogIcon::Error);
+            DeleteFileW(stagingPath.c_str());
+            return false;
+        }
+
+        const size_t caret = editorView_.CaretPosition();
+        largeDocument_->Close();
+
+        if (!MoveFileExW(stagingPath.c_str(), targetPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            error = GetLastErrorText();
+            DeleteFileW(stagingPath.c_str());
+            // Reopen the original so the document is not left detached.
+            if (largeDocument_->Open(currentPath_, error)) {
+                editorView_.SetLargeDocument(largeDocument_.get());
+                editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
+            }
+            ShowAppMessage(L"Could not replace the file while saving.", MessageDialogIcon::Error);
+            return false;
+        }
+
+        if (!largeDocument_->Open(targetPath, error)) {
+            ShowAppMessage(L"The file was saved, but could not be reopened:\n\n" + error, MessageDialogIcon::Error);
+            return false;
+        }
+
+        currentPath_ = targetPath;
+        encodingLabel_ = largeDocument_->EncodingLabel();
+        documentEncoding_ = largeDocument_->Encoding();
+        documentLineEnding_ = largeDocument_->DetectedLineEnding();
+        fileByteCount_ = largeDocument_->FileByteCount();
+        // The backend object is unchanged, but the view must rebuild against the
+        // freshly reopened content.
+        editorView_.SetLargeDocument(largeDocument_.get());
+        editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
+        dirty_ = false;
         RecordFileStamp();
         AddRecentFile(currentPath_);
         UpdateTitle();
@@ -3056,6 +3198,7 @@ private:
     NativePad::EditorFontSpec preferredFont_{};
     NativePad::DocumentBuffer document_;
     std::unique_ptr<NativePad::MappedTextDocument> mappedDocument_;
+    std::unique_ptr<NativePad::LargeTextDocument> largeDocument_;
     NativePad::EditorView editorView_;
     std::wstring currentPath_;
     std::wstring encodingLabel_{L"UTF-8"};

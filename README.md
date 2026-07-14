@@ -17,7 +17,8 @@ of very large text files.
 - Recent files list, editor zoom (Ctrl+scroll, Ctrl+Plus/Minus, Ctrl+0), and
   line operations (duplicate, delete, move up/down).
 - Editable normal-file path using a piece-table document buffer.
-- Read-only memory-mapped large-file path for files above the editable limit.
+- Read-only memory-mapped large-file path for files above the editable limit,
+  with opt-in editing through a piece-table-over-mmap backend.
 - External change detection with a reload prompt, and a Follow Tail mode (F6)
   that follows growing files such as live logs.
 - Crash recovery: unsaved work is journaled in the background and offered for
