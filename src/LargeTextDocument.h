@@ -31,6 +31,16 @@ public:
         std::size_t length{};
     };
 
+    // Describes an applied edit in the document's unit space so the editor can
+    // record undo/redo consistently even when UTF-8 snapping shifts the range or
+    // the inserted UTF-16 text encodes to a different number of bytes.
+    struct EditResult {
+        std::size_t position{};      // snapped start of the edit
+        std::wstring erased;         // UTF-16 text of the removed span
+        std::size_t erasedUnits{};   // document units removed (after snapping)
+        std::size_t insertedUnits{}; // document units inserted
+    };
+
     LargeTextDocument() = default;
     ~LargeTextDocument();
 
@@ -61,8 +71,9 @@ public:
 
     // Replaces eraseLength units at position with the given UTF-16 text. The
     // erase range and position are snapped outward to code-point boundaries for
-    // UTF-8 so a multibyte sequence can never be split.
-    void Replace(std::size_t position, std::size_t eraseLength, std::wstring_view insertText);
+    // UTF-8 so a multibyte sequence can never be split. The returned EditResult
+    // reports the snapped range and unit counts.
+    EditResult Replace(std::size_t position, std::size_t eraseLength, std::wstring_view insertText);
 
     // Writes the current content to path in the file's encoding (with BOM where
     // the encoding uses one). Used to stage a temp file the shell renames over

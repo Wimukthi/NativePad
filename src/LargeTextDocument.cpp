@@ -666,7 +666,8 @@ void LargeTextDocument::UpdateMaxLineLengthAround(std::size_t position) {
     maxLineLength_ = std::max(maxLineLength_, contentLength);
 }
 
-void LargeTextDocument::Replace(std::size_t position, std::size_t eraseLength, std::wstring_view insertText) {
+LargeTextDocument::EditResult LargeTextDocument::Replace(
+    std::size_t position, std::size_t eraseLength, std::wstring_view insertText) {
     EnsurePrefixSums();
     const std::size_t total = prefixLength_.back();
     position = std::min(position, total);
@@ -684,12 +685,20 @@ void LargeTextDocument::Replace(std::size_t position, std::size_t eraseLength, s
         eraseEnd = position;
     }
 
+    // Capture the erased span (as UTF-16) before the pieces change so the caller
+    // can record it for undo.
+    EditResult result;
+    result.position = position;
+    result.erasedUnits = eraseEnd - position;
+    result.erased = TextRange(position, result.erasedUnits);
+
     std::size_t addStart = 0;
     std::size_t addLength = 0;
     std::size_t addNewlines = 0;
     if (!insertText.empty()) {
         AppendToAddBuffer(insertText, addStart, addLength, addNewlines);
     }
+    result.insertedUnits = addLength;
 
     const auto emitClipped = [&](std::vector<Piece>& out, const Piece& piece, std::size_t pieceDocStart,
                                  std::size_t rangeStart, std::size_t rangeEnd) {
@@ -734,6 +743,7 @@ void LargeTextDocument::Replace(std::size_t position, std::size_t eraseLength, s
     prefixValid_ = false;
     dirty_ = true;
     UpdateMaxLineLengthAround(position);
+    return result;
 }
 
 bool LargeTextDocument::SaveTo(const std::wstring& path, std::wstring& error) const {

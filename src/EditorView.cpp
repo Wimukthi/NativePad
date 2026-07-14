@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "LargeTextDocument.h"
 #include "MappedTextDocument.h"
 
 namespace NativePad {
@@ -157,12 +158,21 @@ HWND EditorView::Hwnd() const noexcept {
 void EditorView::SetDocument(DocumentBuffer* document) {
     document_ = document;
     mappedDocument_ = nullptr;
+    largeDocument_ = nullptr;
     ResetView();
 }
 
 void EditorView::SetMappedDocument(MappedTextDocument* document) {
     mappedDocument_ = document;
     document_ = nullptr;
+    largeDocument_ = nullptr;
+    ResetView();
+}
+
+void EditorView::SetLargeDocument(LargeTextDocument* document) {
+    largeDocument_ = document;
+    document_ = nullptr;
+    mappedDocument_ = nullptr;
     ResetView();
 }
 
@@ -803,8 +813,8 @@ void EditorView::OnDpiChanged(UINT dpi) {
 }
 
 void EditorView::RebuildLineIndex() {
-    // Mapped documents carry their own line index. Editable documents use the
-    // local index because edits can update it incrementally.
+    // Mapped and large documents carry their own line index. Only the editable
+    // UTF-16 buffer uses this local index, updated incrementally on each edit.
     lineIndex_.Reset(document_ != nullptr ? document_->Text() : L"");
     InvalidateVisualRowCache();
 }
@@ -1042,23 +1052,24 @@ void EditorView::DeleteSelectionOrRange(bool backspace) {
         return;
     }
 
-    if (document_ == nullptr) {
+    if (!IsEditable()) {
         return;
     }
 
+    const std::size_t documentLength = DocumentLength();
     if (backspace) {
         if (caret_ > 0) {
             std::size_t position = caret_ - 1;
             std::size_t length = 1;
-            if (document_->CharAt(position) == L'\n' && position > 0 && document_->CharAt(position - 1) == L'\r') {
+            if (DocumentCharAt(position) == L'\n' && position > 0 && DocumentCharAt(position - 1) == L'\r') {
                 --position;
                 length = 2;
             }
             ApplyEdit(position, length, L"", true);
         }
-    } else if (caret_ < document_->Length()) {
+    } else if (caret_ < documentLength) {
         std::size_t length = 1;
-        if (document_->CharAt(caret_) == L'\r' && caret_ + 1 < document_->Length() && document_->CharAt(caret_ + 1) == L'\n') {
+        if (DocumentCharAt(caret_) == L'\r' && caret_ + 1 < documentLength && DocumentCharAt(caret_ + 1) == L'\n') {
             length = 2;
         }
         ApplyEdit(caret_, length, L"", true);
@@ -1081,30 +1092,61 @@ void EditorView::InsertText(std::wstring text) {
 
 void EditorView::ApplyEdit(std::size_t position, std::size_t eraseLength, std::wstring insertText, bool recordUndo) {
     // All editing funnels through this method so undo, line index updates, caret
-    // placement, and notifications stay consistent.
-    if (readOnly_ || document_ == nullptr) {
+    // placement, and notifications stay consistent across both editable backends.
+    if (readOnly_ || !IsEditable()) {
         return;
     }
 
     const std::size_t caretBefore = caret_;
-    const std::wstring erased = document_->TextRange(position, eraseLength);
-    document_->Replace(position, eraseLength, insertText);
-    caret_ = position + insertText.size();
+    BackendEdit edit = BackendReplace(position, eraseLength, insertText);
+    caret_ = edit.position + edit.insertedUnits;
     anchor_ = caret_;
-    UpdateLineIndexForEdit(position, erased, insertText);
     desiredColumn_ = CaretDisplayColumn();
     ScrollToCaret();
     UpdateScrollbars();
     ResetCaretBlink();
 
     if (recordUndo) {
-        PushUndo({position, erased, std::move(insertText), caretBefore, caret_});
+        EditAction action;
+        action.position = edit.position;
+        action.erased = std::move(edit.erased);
+        action.inserted = std::move(insertText);
+        action.erasedUnits = edit.erasedUnits;
+        action.insertedUnits = edit.insertedUnits;
+        action.caretBefore = caretBefore;
+        action.caretAfter = caret_;
+        PushUndo(std::move(action));
         redoStack_.clear();
         NotifyChanged();
     }
 
     InvalidateRect(hwnd_, nullptr, FALSE);
     NotifyCursorChanged();
+}
+
+EditorView::BackendEdit EditorView::BackendReplace(
+    std::size_t position, std::size_t eraseLength, const std::wstring& insertText) {
+    // Low-level storage mutation shared by ApplyEdit, Undo, and Redo. It does not
+    // touch the undo stacks or send change notifications.
+    BackendEdit edit;
+    if (largeDocument_ != nullptr) {
+        LargeTextDocument::EditResult result = largeDocument_->Replace(position, eraseLength, insertText);
+        edit.position = result.position;
+        edit.erased = std::move(result.erased);
+        edit.erasedUnits = result.erasedUnits;
+        edit.insertedUnits = result.insertedUnits;
+        return edit;
+    }
+
+    // The editable UTF-16 buffer measures everything in code units, so document
+    // units equal the string sizes.
+    edit.position = position;
+    edit.erased = document_->TextRange(position, eraseLength);
+    document_->Replace(position, eraseLength, insertText);
+    UpdateLineIndexForEdit(position, edit.erased, insertText);
+    edit.erasedUnits = edit.erased.size();
+    edit.insertedUnits = insertText.size();
+    return edit;
 }
 
 void EditorView::PushUndo(EditAction action) {
@@ -1297,12 +1339,19 @@ void EditorView::ReleaseMouseDrag() {
 }
 
 bool EditorView::HasDocument() const noexcept {
-    return document_ != nullptr || mappedDocument_ != nullptr;
+    return document_ != nullptr || mappedDocument_ != nullptr || largeDocument_ != nullptr;
+}
+
+bool EditorView::IsEditable() const noexcept {
+    return document_ != nullptr || largeDocument_ != nullptr;
 }
 
 std::size_t EditorView::DocumentLength() const noexcept {
     if (mappedDocument_ != nullptr) {
         return mappedDocument_->Length();
+    }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->Length();
     }
     return document_ != nullptr ? document_->Length() : 0;
 }
@@ -1310,6 +1359,9 @@ std::size_t EditorView::DocumentLength() const noexcept {
 wchar_t EditorView::DocumentCharAt(std::size_t position) const {
     if (mappedDocument_ != nullptr) {
         return mappedDocument_->CharAt(position);
+    }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->CharAt(position);
     }
     if (document_ != nullptr) {
         return document_->CharAt(position);
@@ -1321,15 +1373,30 @@ std::wstring EditorView::DocumentTextRange(std::size_t position, std::size_t len
     if (mappedDocument_ != nullptr) {
         return mappedDocument_->TextRange(position, length);
     }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->TextRange(position, length);
+    }
     return document_ != nullptr ? document_->TextRange(position, length) : std::wstring();
 }
 
 std::size_t EditorView::IndexedLineCount() const noexcept {
-    return mappedDocument_ != nullptr ? mappedDocument_->LineCount() : lineIndex_.LineCount();
+    if (mappedDocument_ != nullptr) {
+        return mappedDocument_->LineCount();
+    }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->LineCount();
+    }
+    return lineIndex_.LineCount();
 }
 
 std::size_t EditorView::IndexedMaxLineLength() const noexcept {
-    return mappedDocument_ != nullptr ? mappedDocument_->MaxLineLength() : lineIndex_.MaxLineLength();
+    if (mappedDocument_ != nullptr) {
+        return mappedDocument_->MaxLineLength();
+    }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->MaxLineLength();
+    }
+    return lineIndex_.MaxLineLength();
 }
 
 std::size_t EditorView::HitTest(int x, int y) const {
@@ -1350,7 +1417,13 @@ std::size_t EditorView::HitTest(int x, int y) const {
 }
 
 std::size_t EditorView::LineStart(std::size_t line) const {
-    return mappedDocument_ != nullptr ? mappedDocument_->LineStart(line) : lineIndex_.LineStart(line);
+    if (mappedDocument_ != nullptr) {
+        return mappedDocument_->LineStart(line);
+    }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->LineStart(line);
+    }
+    return lineIndex_.LineStart(line);
 }
 
 std::size_t EditorView::LineEnd(std::size_t line) const {
@@ -1377,7 +1450,13 @@ std::size_t EditorView::LineLength(std::size_t line) const {
 }
 
 std::size_t EditorView::LineFromPosition(std::size_t position) const {
-    return mappedDocument_ != nullptr ? mappedDocument_->LineFromPosition(position) : lineIndex_.LineFromPosition(position);
+    if (mappedDocument_ != nullptr) {
+        return mappedDocument_->LineFromPosition(position);
+    }
+    if (largeDocument_ != nullptr) {
+        return largeDocument_->LineFromPosition(position);
+    }
+    return lineIndex_.LineFromPosition(position);
 }
 
 std::size_t EditorView::PositionFromLineColumn(std::size_t line, std::size_t column) const {
@@ -1664,38 +1743,38 @@ float EditorView::ClientHeightDips() const {
 }
 
 void EditorView::Undo() {
-    if (readOnly_ || !CanUndo() || document_ == nullptr) {
+    if (readOnly_ || !CanUndo() || !IsEditable()) {
         return;
     }
 
     EditAction action = std::move(undoStack_.back());
     undoStack_.pop_back();
-    document_->Replace(action.position, action.inserted.size(), action.erased);
+    // Reverse the edit: remove the inserted span and restore the erased text.
+    BackendReplace(action.position, action.insertedUnits, action.erased);
     caret_ = action.caretBefore;
     anchor_ = caret_;
-    UpdateLineIndexForEdit(action.position, action.inserted, action.erased);
     ScrollToCaret();
     ResetCaretBlink();
-    redoStack_.push_back(action);
+    redoStack_.push_back(std::move(action));
     NotifyChanged();
     InvalidateRect(hwnd_, nullptr, FALSE);
     NotifyCursorChanged();
 }
 
 void EditorView::Redo() {
-    if (readOnly_ || !CanRedo() || document_ == nullptr) {
+    if (readOnly_ || !CanRedo() || !IsEditable()) {
         return;
     }
 
     EditAction action = std::move(redoStack_.back());
     redoStack_.pop_back();
-    document_->Replace(action.position, action.erased.size(), action.inserted);
+    // Reapply the edit: remove the erased span and insert the recorded text.
+    BackendReplace(action.position, action.erasedUnits, action.inserted);
     caret_ = action.caretAfter;
     anchor_ = caret_;
-    UpdateLineIndexForEdit(action.position, action.erased, action.inserted);
     ScrollToCaret();
     ResetCaretBlink();
-    undoStack_.push_back(action);
+    undoStack_.push_back(std::move(action));
     NotifyChanged();
     InvalidateRect(hwnd_, nullptr, FALSE);
     NotifyCursorChanged();
@@ -1750,7 +1829,7 @@ std::wstring EditorView::LineBreakForLine(std::size_t line) const {
 }
 
 void EditorView::DuplicateLine() {
-    if (readOnly_ || document_ == nullptr) {
+    if (readOnly_ || !IsEditable()) {
         return;
     }
 
@@ -1765,7 +1844,7 @@ void EditorView::DuplicateLine() {
 }
 
 void EditorView::DeleteLine() {
-    if (readOnly_ || document_ == nullptr) {
+    if (readOnly_ || !IsEditable()) {
         return;
     }
 
@@ -1797,7 +1876,7 @@ void EditorView::DeleteLine() {
 }
 
 void EditorView::MoveLineUp() {
-    if (readOnly_ || document_ == nullptr) {
+    if (readOnly_ || !IsEditable()) {
         return;
     }
 
@@ -1812,7 +1891,7 @@ void EditorView::MoveLineUp() {
 }
 
 void EditorView::MoveLineDown() {
-    if (readOnly_ || document_ == nullptr) {
+    if (readOnly_ || !IsEditable()) {
         return;
     }
 

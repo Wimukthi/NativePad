@@ -13,6 +13,7 @@
 namespace NativePad {
 
 class MappedTextDocument;
+class LargeTextDocument;
 
 constexpr UINT WM_EDITOR_CHANGED = WM_APP + 101;
 constexpr UINT WM_EDITOR_CURSOR_CHANGED = WM_APP + 102;
@@ -47,6 +48,7 @@ public:
 
     void SetDocument(DocumentBuffer* document);
     void SetMappedDocument(MappedTextDocument* document);
+    void SetLargeDocument(LargeTextDocument* document);
     void ResetView();
     void RefreshDocumentMetrics();
     void MoveCaretToDocumentEnd();
@@ -98,8 +100,21 @@ private:
         std::size_t position;
         std::wstring erased;
         std::wstring inserted;
+        // Document-unit lengths of the erased and inserted spans. These match the
+        // string sizes for the editable UTF-16 buffer, but differ for byte-backed
+        // large documents where positions are byte offsets.
+        std::size_t erasedUnits;
+        std::size_t insertedUnits;
         std::size_t caretBefore;
         std::size_t caretAfter;
+    };
+
+    // Result of a low-level backend replace, in document units.
+    struct BackendEdit {
+        std::size_t position{};
+        std::wstring erased;
+        std::size_t erasedUnits{};
+        std::size_t insertedUnits{};
     };
 
     struct VisualRow {
@@ -133,6 +148,8 @@ private:
     void DeleteSelectionOrRange(bool backspace);
     void InsertText(std::wstring text);
     void ApplyEdit(std::size_t position, std::size_t eraseLength, std::wstring insertText, bool recordUndo);
+    [[nodiscard]] bool IsEditable() const noexcept;
+    BackendEdit BackendReplace(std::size_t position, std::size_t eraseLength, const std::wstring& insertText);
     void PushUndo(EditAction action);
     void NotifyChanged();
     void NotifyCursorChanged() const;
@@ -189,6 +206,7 @@ private:
     HINSTANCE instance_{};
     DocumentBuffer* document_{};
     MappedTextDocument* mappedDocument_{};
+    LargeTextDocument* largeDocument_{};
     EditorTheme theme_{};
     EditorFontSpec font_{};
 
