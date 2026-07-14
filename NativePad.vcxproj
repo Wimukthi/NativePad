@@ -96,6 +96,7 @@
     <ClCompile Include="src\FindReplaceDialog.cpp" />
     <ClCompile Include="src\FontDialog.cpp" />
     <ClCompile Include="src\GoToDialog.cpp" />
+    <ClCompile Include="src\LargeTextDocument.cpp" />
     <ClCompile Include="src\LineIndex.cpp" />
     <ClCompile Include="src\MappedTextDocument.cpp" />
     <ClCompile Include="src\MessageDialog.cpp" />
@@ -130,6 +131,7 @@
     <ClInclude Include="src\FindReplaceDialog.h" />
     <ClInclude Include="src\FontDialog.h" />
     <ClInclude Include="src\GoToDialog.h" />
+    <ClInclude Include="src\LargeTextDocument.h" />
     <ClInclude Include="src\LineIndex.h" />
     <ClInclude Include="src\MappedTextDocument.h" />
     <ClInclude Include="src\MessageDialog.h" />

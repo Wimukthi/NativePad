@@ -28,6 +28,7 @@ int main() {
     // Keep the test runner dependency-free so it can be built by MSBuild on a
     // clean Windows machine without adding a unit test framework.
     void RunLineIndexTests();
+    void RunLargeTextDocumentTests();
     void RunRecoveryJournalTests();
     void RunMappedTextDocumentTests();
     void RunTextFormatTests();
@@ -98,6 +99,7 @@ int main() {
     std::cout << "DocumentBuffer tests passed\n";
     RunLineIndexTests();
     RunMappedTextDocumentTests();
+    RunLargeTextDocumentTests();
     RunRecoveryJournalTests();
     RunTextFormatTests();
     return 0;

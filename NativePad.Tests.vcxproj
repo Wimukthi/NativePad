@@ -78,11 +78,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\DocumentBuffer.cpp" />
+    <ClCompile Include="src\LargeTextDocument.cpp" />
     <ClCompile Include="src\LineIndex.cpp" />
     <ClCompile Include="src\MappedTextDocument.cpp" />
     <ClCompile Include="src\RecoveryJournal.cpp" />
     <ClCompile Include="src\TextFormat.cpp" />
     <ClCompile Include="tests\DocumentBufferTests.cpp" />
+    <ClCompile Include="tests\LargeTextDocumentTests.cpp" />
     <ClCompile Include="tests\LineIndexTests.cpp" />
     <ClCompile Include="tests\MappedTextDocumentTests.cpp" />
     <ClCompile Include="tests\RecoveryJournalTests.cpp" />
@@ -90,6 +92,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\DocumentBuffer.h" />
+    <ClInclude Include="src\LargeTextDocument.h" />
     <ClInclude Include="src\LineIndex.h" />
     <ClInclude Include="src\MappedTextDocument.h" />
     <ClInclude Include="src\RecoveryJournal.h" />

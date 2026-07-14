@@ -39,6 +39,9 @@
     <ClCompile Include="src\FontDialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\LargeTextDocument.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\LineIndex.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -93,6 +96,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\FontDialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\LargeTextDocument.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\LineIndex.h">
