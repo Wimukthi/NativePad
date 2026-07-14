@@ -17,6 +17,7 @@ behavior remain explicit.
 | Settings | `src/Settings.h`, `src/Settings.cpp` | INI preference read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini`, with one-time migration from legacy registry values |
 | Default editor | `src/DefaultEditor.h`, `src/DefaultEditor.cpp` | Per-user file-association registration for `.txt` and the Windows "Default apps" hand-off |
 | Update checker | `src/UpdateChecker.h`, `src/UpdateChecker.cpp` | GitHub release discovery, installer download, SHA-256 verification, and update-check preferences |
+| Crash recovery | `src/RecoveryJournal.h`, `src/RecoveryJournal.cpp` | Journaling of unsaved editable documents and restore of journals abandoned by a crashed process |
 | Editor control | `src/EditorView.h`, `src/EditorView.cpp` | DirectWrite rendering, caret/selection, scrolling, input, clipboard, undo/redo |
 | Editable document | `src/DocumentBuffer.h`, `src/DocumentBuffer.cpp` | Piece-table storage for normal editable files |
 | Line index | `src/LineIndex.h`, `src/LineIndex.cpp` | Logical line starts for editable documents |
@@ -148,6 +149,26 @@ stays visible. Follow Tail is per-file state: it stops when a different file is
 opened or the document is reset to Untitled. Note that while a mapped document
 holds its file mapping, external writers can append but cannot truncate the
 file (Windows fails the truncation with `ERROR_USER_MAPPED_FILE`).
+
+## Crash Recovery
+
+`RecoveryJournal` (`src/RecoveryJournal.h/.cpp`) protects unsaved work in
+editable documents. While a document is dirty, the shell journals a snapshot to
+`%LOCALAPPDATA%\NativePad\Recovery` on a debounced timer (at most once per
+three-second window). The journal is a pair of files named by the owning
+process id: a UTF-16 LE content file, staged and renamed so it is never
+half-written, and a metadata file (original path, encoding, line ending)
+written last so a journal is only discoverable once complete.
+
+The journal is deleted whenever the document reaches a clean or intentionally
+discarded state: successful save, opening another file, File > New, and normal
+exit. If the journal survives, the process crashed.
+
+On startup the shell scans the recovery directory for journals whose owning
+process is no longer running, claims one (removing it from disk), and offers to
+restore it. A restored document is re-journaled immediately so it survives a
+second crash. Mapped and read-only preview documents are never journaled
+because they cannot hold unsaved edits.
 
 ## Update Flow
 

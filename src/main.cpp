@@ -37,6 +37,7 @@
 #include "MessageDialog.h"
 #include "PopupMenu.h"
 #include "Printing.h"
+#include "RecoveryJournal.h"
 #include "resource.h"
 #include "Settings.h"
 #include "TextFormat.h"
@@ -72,8 +73,15 @@ constexpr wchar_t kUntitled[] = L"Untitled";
 // WM_ACTIVATE handshake instead of showing a modal dialog inside it.
 constexpr UINT WM_NATIVEPAD_FILE_CHANGE_CHECK = WM_APP + 306;
 
+// Posted at creation so the crash-recovery prompt runs from the message loop,
+// after any command-line file has been opened.
+constexpr UINT WM_NATIVEPAD_RECOVERY_CHECK = WM_APP + 307;
+
 constexpr UINT_PTR kTailTimerId = 1;
 constexpr UINT kTailTimerIntervalMs = 1000;
+
+constexpr UINT_PTR kRecoveryTimerId = 2;
+constexpr UINT kRecoverySaveDelayMs = 3000;
 
 // Size plus last write time is enough to notice external edits without keeping
 // a change-notification handle open on the containing directory.
@@ -463,6 +471,7 @@ private:
             return 0;
         case NativePad::WM_EDITOR_CHANGED:
             dirty_ = true;
+            ScheduleRecoverySave();
             UpdateTitle();
             UpdateStatus();
             return 0;
@@ -477,9 +486,16 @@ private:
         case WM_NATIVEPAD_FILE_CHANGE_CHECK:
             CheckExternalFileChange();
             return 0;
+        case WM_NATIVEPAD_RECOVERY_CHECK:
+            OfferRecoveredDocument();
+            return 0;
         case WM_TIMER:
             if (wParam == kTailTimerId) {
                 OnTailTimer();
+                return 0;
+            }
+            if (wParam == kRecoveryTimerId) {
+                PersistRecoverySnapshot();
                 return 0;
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
@@ -554,6 +570,9 @@ private:
             return 0;
         case WM_CLOSE:
             if (ConfirmSaveIfDirty()) {
+                // The user saved or knowingly discarded the document, so the
+                // journal must not resurrect it on the next launch.
+                CancelRecoveryJournal();
                 SavePreferences();
                 DestroyWindow(hwnd_);
             }
@@ -634,6 +653,7 @@ private:
         Layout();
         SetFocus(editor_);
         MaybeStartAutomaticUpdateCheck();
+        PostMessageW(hwnd_, WM_NATIVEPAD_RECOVERY_CHECK, 0, 0);
 
         return 0;
     }
@@ -2413,6 +2433,7 @@ private:
         }
 
         StopFollowTail();
+        CancelRecoveryJournal();
         currentPath_.clear();
         fileStamp_.reset();
         documentEncoding_ = NativePad::TextEncoding::Utf8;
@@ -2465,6 +2486,7 @@ private:
             fileByteCount_ = mapped->FileByteCount();
             SetMappedEditorDocument(std::move(mapped));
             dirty_ = false;
+            CancelRecoveryJournal();
             RecordFileStamp();
             UpdateTitle();
             UpdateStatus();
@@ -2487,6 +2509,7 @@ private:
         previewDecodedByteCount_ = file->decodedByteCount;
         SetEditorText(file->text, file->readOnlyPreview);
         dirty_ = false;
+        CancelRecoveryJournal();
         RecordFileStamp();
         UpdateTitle();
         UpdateStatus();
@@ -2496,6 +2519,85 @@ private:
 
     void RecordFileStamp() {
         fileStamp_ = QueryFileStamp(currentPath_);
+    }
+
+    void ScheduleRecoverySave() {
+        // Journal only editable documents; mapped and preview files are
+        // read-only, so there is never unsaved work to protect. The timer is
+        // not reset on every keystroke so continuous typing still journals at
+        // most once per delay window.
+        if (recoverySavePending_ || readOnlyPreview_ || IsMappedLargeFile()) {
+            return;
+        }
+
+        recoverySavePending_ = true;
+        SetTimer(hwnd_, kRecoveryTimerId, kRecoverySaveDelayMs, nullptr);
+    }
+
+    void PersistRecoverySnapshot() {
+        KillTimer(hwnd_, kRecoveryTimerId);
+        recoverySavePending_ = false;
+
+        if (!dirty_ || readOnlyPreview_ || IsMappedLargeFile()) {
+            return;
+        }
+
+        NativePad::RecoverySnapshot snapshot;
+        snapshot.originalPath = currentPath_;
+        snapshot.encoding = documentEncoding_;
+        snapshot.lineEnding = documentLineEnding_;
+        snapshot.text = EditorText();
+        recoveryJournal_.Save(snapshot);
+    }
+
+    void CancelRecoveryJournal() {
+        if (recoverySavePending_) {
+            KillTimer(hwnd_, kRecoveryTimerId);
+            recoverySavePending_ = false;
+        }
+        recoveryJournal_.Clear();
+    }
+
+    void OfferRecoveredDocument() {
+        auto snapshot = NativePad::RecoveryJournal::ClaimAbandoned(NativePad::RecoveryJournal::DefaultRootDirectory());
+        if (!snapshot) {
+            return;
+        }
+
+        std::wstring message = L"NativePad found unsaved work from a previous session";
+        if (!snapshot->originalPath.empty()) {
+            message += L" for \"" + BaseName(snapshot->originalPath) + L"\"";
+        }
+        message += L".\n\nRestore it?";
+
+        const int choice = ShowAppMessage(
+            message,
+            MessageDialogIcon::Question,
+            L"NativePad",
+            MessageDialogButtons::YesNo,
+            IDYES);
+        if (choice != IDYES) {
+            return;
+        }
+
+        StopFollowTail();
+        currentPath_ = snapshot->originalPath;
+        documentEncoding_ = snapshot->encoding;
+        documentLineEnding_ = snapshot->lineEnding;
+        encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
+        fileByteCount_ = 0;
+        previewDecodedByteCount_ = 0;
+        SetEditorText(snapshot->text);
+        dirty_ = true;
+        RecordFileStamp();
+        UpdateTitle();
+        UpdateStatus();
+        SetFocus(editor_);
+
+        // Re-journal immediately: the claimed journal was deleted, and the
+        // restored text must survive another crash before the first edit.
+        NativePad::RecoverySnapshot rejournal = std::move(*snapshot);
+        recoveryJournal_.Save(rejournal);
     }
 
     bool ReloadCurrentDocument(bool preserveCaret) {
@@ -2705,6 +2807,7 @@ private:
         documentEncoding_ = targetEncoding;
         encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
         dirty_ = false;
+        CancelRecoveryJournal();
         RecordFileStamp();
         UpdateTitle();
         UpdateStatus();
@@ -2763,6 +2866,7 @@ private:
     HWND findDialog_{};
     RECT pageMarginsThousandths_{1000, 1000, 1000, 1000};
     RECT savedWindowRect_{};
+    NativePad::RecoveryJournal recoveryJournal_;
     std::optional<FileStamp> fileStamp_;
     uint64_t fileByteCount_{0};
     size_t previewDecodedByteCount_{0};
@@ -2774,6 +2878,7 @@ private:
     bool readOnlyPreview_{false};
     bool followTail_{false};
     bool checkingExternalChange_{false};
+    bool recoverySavePending_{false};
     bool replaceDialogOpen_{false};
     bool lastFindMatchCase_{false};
     bool lastFindDown_{true};

@@ -18,6 +18,8 @@ of very large text files.
 - Read-only memory-mapped large-file path for files above the editable limit.
 - External change detection with a reload prompt, and a Follow Tail mode (F6)
   that follows growing files such as live logs.
+- Crash recovery: unsaved work is journaled in the background and offered for
+  restore on the next launch after an unclean exit.
 - Unit coverage for the piece table, line index, mapped document backend, and
   text-format save helpers.
 

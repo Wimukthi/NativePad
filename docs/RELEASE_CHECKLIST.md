@@ -103,6 +103,18 @@ dialogs, printing, DPI changes, and real-world file handling.
 - Log rotation (delete + rename) while following reloads the new file.
 - Opening a different file or File > New turns Follow Tail off.
 
+## Crash Recovery
+
+- Typing into a document and killing the process from Task Manager leaves a
+  journal pair under `%LOCALAPPDATA%\NativePad\Recovery`.
+- The next launch offers to restore the unsaved work; accepting restores the
+  exact text as a dirty document with the original path and encoding.
+- Declining the restore prompt discards the journal without another prompt on
+  the following launch.
+- Save, Save As, File > New, opening another file, and clean exit all remove
+  the journal.
+- Two NativePad instances running at once do not claim each other's journals.
+
 ## Large Files
 
 - Files over the editable threshold open through the read-only mapped backend.

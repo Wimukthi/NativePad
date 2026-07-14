@@ -24,6 +24,9 @@
     <ClCompile Include="src\MappedTextDocument.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\RecoveryJournal.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="tests\DocumentBufferTests.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
@@ -31,6 +34,9 @@
       <Filter>Tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\MappedTextDocumentTests.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\RecoveryJournalTests.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
   </ItemGroup>
@@ -42,6 +48,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\MappedTextDocument.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\RecoveryJournal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -62,6 +62,7 @@ This table describes the current implementation state, not the final target.
 | Large-file viewing | Done | Read-only mapped backend above editable limit |
 | Large-file editing | Not done | Requires new storage model |
 | External change detection | Done | On window activation, prompts to reload when the open file changed on disk; warns before discarding unsaved edits |
+| Crash recovery | Done | Dirty editable documents are journaled to `%LOCALAPPDATA%\NativePad\Recovery` every few seconds; abandoned journals are offered for restore on the next launch |
 
 ## Known Limitations
 

@@ -128,6 +128,9 @@ Current tests cover:
 - Mapped UTF-16 line starts, range decoding, and find.
 - Mapped-document refresh: appended content extends the line index across the
   old mapping boundary, and in-place rewrites report as replaced.
+- Recovery journal round trips: journals from dead processes are claimed with
+  exact text/metadata, journals from live processes are left alone, and
+  clearing removes all journal files.
 - Encoding labels, line-ending detection/normalization, and save encoding bytes.
 
 Manual testing is still needed for:
