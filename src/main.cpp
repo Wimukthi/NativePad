@@ -1734,13 +1734,35 @@ private:
 
     void PaintMenuStrip(HWND hwnd) {
         PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
-        if (hdc == nullptr) {
+        HDC windowDc = BeginPaint(hwnd, &ps);
+        if (windowDc == nullptr) {
             return;
         }
 
         RECT client{};
         GetClientRect(hwnd, &client);
+        const int width = client.right - client.left;
+        const int height = client.bottom - client.top;
+
+        // Render into an off-screen buffer and blit once so hovering, which
+        // repaints the whole strip, never flickers the labels.
+        HDC hdc = CreateCompatibleDC(windowDc);
+        HBITMAP bitmap = width > 0 && height > 0 ? CreateCompatibleBitmap(windowDc, width, height) : nullptr;
+        HGDIOBJ oldBitmap = nullptr;
+        const bool buffered = hdc != nullptr && bitmap != nullptr;
+        if (buffered) {
+            oldBitmap = SelectObject(hdc, bitmap);
+        } else {
+            // Fall back to painting directly if the buffer could not be created.
+            if (hdc != nullptr) {
+                DeleteDC(hdc);
+            }
+            if (bitmap != nullptr) {
+                DeleteObject(bitmap);
+            }
+            hdc = windowDc;
+        }
+
         const ThemeColors colors = ColorsForTheme(darkMode_);
 
         HBRUSH background = CreateSolidBrush(colors.menuBackground);
@@ -1780,6 +1802,13 @@ private:
         DeleteObject(borderPen);
 
         SelectObject(hdc, oldFont);
+
+        if (buffered) {
+            BitBlt(windowDc, 0, 0, width, height, hdc, 0, 0, SRCCOPY);
+            SelectObject(hdc, oldBitmap);
+            DeleteObject(bitmap);
+            DeleteDC(hdc);
+        }
         EndPaint(hwnd, &ps);
     }
 

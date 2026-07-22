@@ -161,14 +161,34 @@ void PaintCustomPopupMenu(PopupMenuWindowState* state) {
     }
 
     PAINTSTRUCT ps{};
-    HDC hdc = BeginPaint(state->hwnd, &ps);
-    if (hdc == nullptr) {
+    HDC windowDc = BeginPaint(state->hwnd, &ps);
+    if (windowDc == nullptr) {
         return;
     }
 
     const ThemeColors colors = ColorsForTheme(state->dark);
     RECT client{};
     GetClientRect(state->hwnd, &client);
+    const int width = client.right - client.left;
+    const int height = client.bottom - client.top;
+
+    // Compose the menu off-screen and blit once so moving the mouse between
+    // items, which repaints the whole menu, does not flicker.
+    HDC hdc = CreateCompatibleDC(windowDc);
+    HBITMAP bitmap = width > 0 && height > 0 ? CreateCompatibleBitmap(windowDc, width, height) : nullptr;
+    HGDIOBJ oldBitmap = nullptr;
+    const bool buffered = hdc != nullptr && bitmap != nullptr;
+    if (buffered) {
+        oldBitmap = SelectObject(hdc, bitmap);
+    } else {
+        if (hdc != nullptr) {
+            DeleteDC(hdc);
+        }
+        if (bitmap != nullptr) {
+            DeleteObject(bitmap);
+        }
+        hdc = windowDc;
+    }
 
     HBRUSH border = CreateSolidBrush(colors.menuBorder);
     FillRect(hdc, &client, border);
@@ -230,6 +250,13 @@ void PaintCustomPopupMenu(PopupMenuWindowState* state) {
     }
 
     SelectObject(hdc, oldFont);
+
+    if (buffered) {
+        BitBlt(windowDc, 0, 0, width, height, hdc, 0, 0, SRCCOPY);
+        SelectObject(hdc, oldBitmap);
+        DeleteObject(bitmap);
+        DeleteDC(hdc);
+    }
     EndPaint(state->hwnd, &ps);
 }
 
