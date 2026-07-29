@@ -7,12 +7,21 @@ param(
     [string]$Platform = "x64",
     [switch]$SkipBuild,
     [switch]$SkipTests,
+    [string]$ThemeRoot,
     [string]$OutputDir
 )
 
 $ErrorActionPreference = "Stop"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $explicitVersion = -not [string]::IsNullOrWhiteSpace($Version)
+
+if ([string]::IsNullOrWhiteSpace($ThemeRoot)) {
+    $ThemeRoot = Join-Path (Split-Path $script:RepoRoot -Parent) "Wimukthi.Win32Theme"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $ThemeRoot "Wimukthi.Win32Theme.props"))) {
+    throw "Wimukthi.Win32Theme was not found at '$ThemeRoot'. Pass -ThemeRoot to override."
+}
+$ThemeRoot = (Resolve-Path -LiteralPath $ThemeRoot).Path
 
 function Resolve-ToolPath {
     param(
@@ -37,6 +46,7 @@ function Resolve-ToolPath {
 
 function Find-MSBuild {
     $candidate = Resolve-ToolPath -CommandName "msbuild.exe" -CandidatePaths @(
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
@@ -116,6 +126,7 @@ if (-not $SkipBuild) {
         $solution,
         "/p:Configuration=$Configuration",
         "/p:Platform=$Platform",
+        "/p:WimukthiWin32ThemeRoot=$ThemeRoot",
         "/m"
     )
 }
@@ -145,6 +156,7 @@ Invoke-CheckedProcess -FilePath $iscc -Arguments @(
     "/DAppVersion=$Version",
     "/DConfiguration=$Configuration",
     "/DPlatform=$Platform",
+    "/DThemeRoot=$ThemeRoot",
     "/O$OutputDir",
     $issFile
 )

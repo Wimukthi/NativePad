@@ -18,6 +18,10 @@
 #define AppPublisher "Wimukthi Bandara"
 #define SourceRoot ".."
 
+#ifndef ThemeRoot
+#define ThemeRoot "..\..\Wimukthi.Win32Theme"
+#endif
+
 [Setup]
 AppId={{B94E98F3-7F1A-4479-A0F0-F8F52F3198DD}
 AppName={#AppName}
@@ -58,6 +62,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#SourceRoot}\bin\{#Platform}\{#Configuration}\NativePad.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceRoot}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ThemeRoot}\LICENSE"; DestDir: "{app}\licenses"; DestName: "Wimukthi.Win32Theme-MIT.txt"; Flags: ignoreversion
+Source: "{#ThemeRoot}\third_party\darkmodelib\LICENSE.md"; DestDir: "{app}\licenses"; DestName: "Darkmodelib-MPL-2.0.txt"; Flags: ignoreversion
+Source: "{#ThemeRoot}\third_party\darkmodelib\LICENSE-MIT.md"; DestDir: "{app}\licenses"; DestName: "Darkmodelib-MIT.txt"; Flags: ignoreversion
+Source: "{#ThemeRoot}\third_party\darkmodelib\*"; DestDir: "{app}\licenses\source\darkmodelib"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

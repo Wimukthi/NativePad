@@ -1,11 +1,9 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
-#include <dwmapi.h>
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <strsafe.h>
-#include <uxtheme.h>
 #include <winver.h>
 #include <windowsx.h>
 #include <wrl/client.h>
@@ -44,20 +42,6 @@
 #include "TextFormat.h"
 #include "UpdateChecker.h"
 #include "UiSupport.h"
-
-// Defined after the Windows headers so the fallbacks never rewrite the
-// DWMWINDOWATTRIBUTE enumerators on SDKs that already provide these constants.
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
-
-#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
-#define DWMWA_WINDOW_CORNER_PREFERENCE 33
-#endif
-
-#ifndef DWMWA_BORDER_COLOR
-#define DWMWA_BORDER_COLOR 34
-#endif
 
 using namespace NativePad;
 
@@ -192,6 +176,7 @@ public:
           dpi_(GetDpiForSystem()),
           darkMode_(IsSystemDarkMode()) {
         LoadPreferences();
+        effectiveDarkMode_ = ConfigureNativeTheme(darkMode_, !darkModeForced_);
     }
 
     ~AppWindow() {
@@ -577,12 +562,27 @@ private:
                 }
             }
             return DefWindowProcW(hwnd_, message, wParam, lParam);
-        case WM_SETTINGCHANGE:
-        case WM_THEMECHANGED:
+        case WM_SETTINGCHANGE: {
+            const bool appearanceChanged = HandleThemeSettingChange(lParam);
             if (!darkModeForced_) {
                 darkMode_ = IsSystemDarkMode();
                 ApplyTheme();
+            } else if (appearanceChanged || effectiveDarkMode_ != IsNativeThemeDark()) {
+                // Forced dark/light still yields to Windows High Contrast.
+                ApplyTheme();
             }
+            return 0;
+        }
+        case WM_THEMECHANGED:
+            if (!darkModeForced_) {
+                darkMode_ = IsSystemDarkMode();
+            }
+            ApplyTheme();
+            return 0;
+        case WM_SYSCOLORCHANGE:
+            // High Contrast schemes can change their system colour table
+            // without changing the light/dark preference.
+            ApplyTheme();
             return 0;
         case WM_DROPFILES:
             OnDropFiles(reinterpret_cast<HDROP>(wParam));
@@ -937,7 +937,7 @@ private:
             ToggleAutomaticUpdateChecks();
             break;
         case ID_HELP_ABOUT:
-            ShowAboutDialog(hwnd_, instance_, dpi_, darkMode_);
+            ShowAboutDialog(hwnd_, instance_, dpi_, effectiveDarkMode_);
             break;
         default:
             break;
@@ -956,11 +956,11 @@ private:
         std::wstring_view title = L"NativePad",
         MessageDialogButtons buttons = MessageDialogButtons::Ok,
         int defaultResult = IDOK) const {
-        return ShowMessageDialog(hwnd_, instance_, dpi_, darkMode_, title, message, icon, buttons, defaultResult);
+        return ShowMessageDialog(hwnd_, instance_, dpi_, effectiveDarkMode_, title, message, icon, buttons, defaultResult);
     }
 
     int ShowStartupMessage(std::wstring_view message, MessageDialogIcon icon) const {
-        return ShowMessageDialog(nullptr, instance_, dpi_, darkMode_, L"NativePad", message, icon);
+        return ShowMessageDialog(nullptr, instance_, dpi_, effectiveDarkMode_, L"NativePad", message, icon);
     }
 
     void SetFindBuffer(std::wstring_view text) {
@@ -1016,7 +1016,7 @@ private:
             hwnd_,
             instance_,
             dpi_,
-            darkMode_,
+            effectiveDarkMode_,
             false,
             findBuffer_.data(),
             replaceBuffer_.data(),
@@ -1051,7 +1051,7 @@ private:
             hwnd_,
             instance_,
             dpi_,
-            darkMode_,
+            effectiveDarkMode_,
             true,
             findBuffer_.data(),
             replaceBuffer_.data(),
@@ -1221,7 +1221,7 @@ private:
 
     void ShowGoToDialog() {
         const size_t lineCount = std::max<size_t>(1, editorView_.LineCount());
-        auto line = ShowGoToLineDialog(hwnd_, instance_, dpi_, darkMode_, editorView_.Line() + 1, lineCount);
+        auto line = ShowGoToLineDialog(hwnd_, instance_, dpi_, effectiveDarkMode_, editorView_.Line() + 1, lineCount);
         if (!line) {
             return;
         }
@@ -1370,7 +1370,7 @@ private:
     }
 
     void ShowFontChooser() {
-        auto font = ShowFontDialog(hwnd_, instance_, editorView_.Font(), dpi_, darkMode_);
+        auto font = ShowFontDialog(hwnd_, instance_, editorView_.Font(), dpi_, effectiveDarkMode_);
         if (!font) {
             return;
         }
@@ -1763,7 +1763,7 @@ private:
             hdc = windowDc;
         }
 
-        const ThemeColors colors = ColorsForTheme(darkMode_);
+        const ThemeColors colors = ColorsForTheme(effectiveDarkMode_);
 
         HBRUSH background = CreateSolidBrush(colors.menuBackground);
         FillRect(hdc, &client, background);
@@ -1813,7 +1813,7 @@ private:
     }
 
     void DrawStatusBar(HDC hdc, RECT client) {
-        const ThemeColors colors = ColorsForTheme(darkMode_);
+        const ThemeColors colors = ColorsForTheme(effectiveDarkMode_);
 
         HBRUSH background = CreateSolidBrush(colors.statusBackground);
         FillRect(hdc, &client, background);
@@ -2104,7 +2104,7 @@ private:
         return position;
     }
 
-    UINT ShowCustomPopupMenu(HMENU menu, int x, int y) {
+    UINT ShowCustomPopupMenu(HMENU menu, int x, int y, int trackedMenuIndex = -1, int* nextMenuIndex = nullptr) {
         if (menu == nullptr || !RegisterCustomPopupMenuClass()) {
             return 0;
         }
@@ -2113,7 +2113,7 @@ private:
         state.owner = hwnd_;
         state.dpi = dpi_;
         state.font = UiFont();
-        state.dark = darkMode_;
+        state.dark = effectiveDarkMode_;
         state.items = SnapshotPopupMenuItems(menu);
         if (state.items.empty()) {
             return 0;
@@ -2170,6 +2170,19 @@ private:
             if (RouteCustomPopupKey(popup, message)) {
                 continue;
             }
+
+            if (trackedMenuIndex >= 0 && nextMenuIndex != nullptr && message.message == WM_MOUSEMOVE) {
+                POINT cursor{};
+                if (GetCursorPos(&cursor) && ScreenToClient(menuStrip_, &cursor)) {
+                    const int hoveredMenu = HitTestMenu(cursor.x, cursor.y);
+                    if (hoveredMenu >= 0 && hoveredMenu != trackedMenuIndex) {
+                        *nextMenuIndex = hoveredMenu;
+                        DestroyWindow(popup);
+                        continue;
+                    }
+                }
+            }
+
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
@@ -2182,22 +2195,32 @@ private:
             return;
         }
 
-        MenuEntry& entry = menuEntries_[static_cast<size_t>(index)];
-        if (entry.menu == nullptr) {
-            return;
-        }
-
-        activeMenu_ = index;
-        hotMenu_ = index;
-        InvalidateRect(menuStrip_, nullptr, FALSE);
-        UpdateWindow(menuStrip_);
-        UpdateMenuState(entry.menu);
-
-        RECT rect = entry.rect;
-        MapWindowPoints(menuStrip_, HWND_DESKTOP, reinterpret_cast<POINT*>(&rect), 2);
         SetForegroundWindow(hwnd_);
 
-        const UINT command = ShowCustomPopupMenu(entry.menu, rect.left, rect.bottom);
+        UINT command = 0;
+        int menuIndex = index;
+        while (menuIndex >= 0) {
+            MenuEntry& entry = menuEntries_[static_cast<size_t>(menuIndex)];
+            if (entry.menu == nullptr) {
+                break;
+            }
+
+            activeMenu_ = menuIndex;
+            hotMenu_ = menuIndex;
+            InvalidateRect(menuStrip_, nullptr, FALSE);
+            UpdateWindow(menuStrip_);
+            UpdateMenuState(entry.menu);
+
+            RECT rect = entry.rect;
+            MapWindowPoints(menuStrip_, HWND_DESKTOP, reinterpret_cast<POINT*>(&rect), 2);
+
+            int nextMenuIndex = -1;
+            command = ShowCustomPopupMenu(entry.menu, rect.left, rect.bottom, menuIndex, &nextMenuIndex);
+            if (command != 0 || nextMenuIndex < 0) {
+                break;
+            }
+            menuIndex = nextMenuIndex;
+        }
 
         const bool repaintAfterClose = activeMenu_ >= 0 || hotMenu_ >= 0 || keyboardMenuIndex_ >= 0 || menuKeyboardCuesVisible_;
         activeMenu_ = -1;
@@ -2268,7 +2291,7 @@ private:
             menuBackgroundBrush_ = nullptr;
         }
 
-        const ThemeColors colors = ColorsForTheme(darkMode_);
+        const ThemeColors colors = ColorsForTheme(effectiveDarkMode_);
         menuBackgroundBrush_ = CreateSolidBrush(colors.menuBackground);
 
         ApplyMenuBackgroundTo(fileMenu_);
@@ -2318,7 +2341,7 @@ private:
             return FALSE;
         }
 
-        const ThemeColors colors = ColorsForTheme(darkMode_);
+        const ThemeColors colors = ColorsForTheme(effectiveDarkMode_);
         const bool selected = (draw->itemState & ODS_SELECTED) != 0;
         const bool disabled = (draw->itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
         const bool checked = (draw->itemState & ODS_CHECKED) != 0;
@@ -2459,17 +2482,18 @@ private:
     }
 
     void ApplyTheme() {
-        // Apply theme changes to native windows first, then repaint owner-draw
-        // surfaces that do not automatically pick up SetWindowTheme changes.
-        const ThemeColors colors = ColorsForTheme(darkMode_);
-        ApplyDarkFrame(hwnd_, darkMode_);
-        ApplyDarkControlTheme(editor_, darkMode_);
-        ApplyDarkControlTheme(status_, darkMode_);
+        // The shared framework owns Windows integration. NativePad then repaints
+        // its editor, menu strip, popup menus, and status bar with its palette.
+        effectiveDarkMode_ = ConfigureNativeTheme(darkMode_, !darkModeForced_);
+        const ThemeColors colors = ColorsForTheme(effectiveDarkMode_);
+        ApplyDarkFrame(hwnd_, effectiveDarkMode_);
+        ApplyDarkControlTheme(editor_, effectiveDarkMode_);
+        ApplyDarkControlTheme(status_, effectiveDarkMode_);
 
         editorView_.SetTheme({
             colors.editorBackground,
             colors.editorText,
-            darkMode_ ? RGB(60, 92, 140) : RGB(173, 214, 255),
+            effectiveDarkMode_ ? RGB(60, 92, 140) : RGB(173, 214, 255),
             colors.editorText,
             colors.editorLineNumberBackground,
             colors.editorLineNumberText,
@@ -2480,6 +2504,11 @@ private:
         InvalidateRect(menuStrip_, nullptr, TRUE);
         InvalidateRect(editor_, nullptr, TRUE);
         InvalidateRect(status_, nullptr, TRUE);
+        if (findDialog_ != nullptr && IsWindow(findDialog_)) {
+            // Find/Replace is modeless and can remain open while the user
+            // changes NativePad's forced light/dark mode.
+            SendMessageW(findDialog_, WM_THEMECHANGED, 0, 0);
+        }
     }
 
     void EraseClientBackground(HDC hdc) const {
@@ -2489,7 +2518,7 @@ private:
 
         RECT client{};
         GetClientRect(hwnd_, &client);
-        const ThemeColors colors = ColorsForTheme(darkMode_);
+        const ThemeColors colors = ColorsForTheme(effectiveDarkMode_);
         HBRUSH background = CreateSolidBrush(colors.editorBackground);
         FillRect(hdc, &client, background);
         DeleteObject(background);
@@ -3262,6 +3291,7 @@ private:
     bool preferredLineNumbers_{false};
     bool statusBarVisible_{true};
     bool darkMode_{false};
+    bool effectiveDarkMode_{false};
     bool darkModeForced_{false};
     bool hasSavedWindowRect_{false};
     bool savedWindowMaximized_{false};

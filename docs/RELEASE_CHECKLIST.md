@@ -77,6 +77,8 @@ dialogs, printing, DPI changes, and real-world file handling.
 - View > Dark Mode override persists.
 - Main menus, editor context menu, status bar, custom dialogs, and scrollbars are
   usable in dark mode.
+- Windows High Contrast disables custom dark styling and all custom-painted
+  surfaces use readable system colours.
 - NativePad-owned save confirmations, errors, and informational prompts use the
   custom dark message dialog.
 - Custom message prompt icons remain crisp at 150% and 200% scaling.
@@ -166,10 +168,13 @@ dialogs, printing, DPI changes, and real-world file handling.
 
 ## Packaging
 
-- Run the `Release Package` GitHub Actions workflow with the expected version
-  after automatic build increment.
+- Run the `Release Package` GitHub Actions workflow with the version already
+  committed in `src/NativePad.rc`.
 - Download and inspect the ZIP artifact.
-- Confirm the ZIP contains `NativePad.exe`, `README.md`, `LICENSE`, and `docs`.
+- Confirm the ZIP contains `NativePad.exe`, `README.md`, `LICENSE`,
+  `THIRD_PARTY_NOTICES.md`, `licenses`, and `docs`.
+- Confirm `licenses\source\darkmodelib` contains the complete corresponding
+  Darkmodelib source in both the ZIP and installed application.
 - Launch `NativePad.exe` from the extracted ZIP.
 - Download and inspect the Inno Setup installer artifact.
 - Install NativePad from the installer, launch it from the Start Menu shortcut,

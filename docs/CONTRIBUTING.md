@@ -17,7 +17,7 @@ explicit Win32 behavior, and small focused changes.
 Use comments for non-obvious behavior:
 
 - Win32 message/lifetime rules.
-- Dark-mode/theming workarounds.
+- NativePad-specific dark-mode painting and palette behavior.
 - DPI/layout assumptions.
 - Text coordinate systems.
 - Large-file performance tradeoffs.
@@ -35,8 +35,9 @@ Avoid comments that only restate simple assignments or obvious branches.
 - Keep `EditorView` backend-neutral through helper methods.
 - Route UI commands through `AppWindow`.
 - Do not let background threads touch HWND-owned UI state.
-- Keep shared Win32 UI helpers (theming, DPI scaling, control styling) in
-  `UiSupport`; do not duplicate them in feature files.
+- Keep NativePad-specific palette, DPI, and control helpers in `UiSupport`.
+  Extend `Wimukthi.Win32Theme` for reusable Windows dark-mode integration
+  instead of adding registry, DWM, or UxTheme workarounds to NativePad.
 - Give each dialog or self-contained feature its own translation unit with a
   minimal header, and keep `main.cpp` limited to `AppWindow` and shell wiring.
 
@@ -65,6 +66,9 @@ MSBuild.exe .\NativePad.sln /p:Configuration=Debug /p:Platform=x64 /m
 MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
 .\bin\x64\Release\NativePad.Tests.exe
 ```
+
+These commands use the sibling framework checkout described in
+[Build and Test](BUILD_AND_TEST.md).
 
 Manual UI testing is expected for dialog, menu, theme, DPI, printing, and
 scrollbar changes.

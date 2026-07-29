@@ -9,6 +9,8 @@ Uninstall follow the user's Windows light/dark app mode.
 
 - Release x64 build tools from Visual Studio.
 - Inno Setup 6.
+- A `Wimukthi.Win32Theme` checkout beside NativePad, or `-ThemeRoot` pointing to
+  it.
 
 Install Inno Setup locally with:
 
@@ -37,6 +39,12 @@ To package an already-built Release binary:
 .\installer\build-installer.ps1 -SkipBuild -SkipTests
 ```
 
+For a non-default framework location:
+
+```powershell
+.\installer\build-installer.ps1 -ThemeRoot D:\Libraries\Wimukthi.Win32Theme
+```
+
 If `-Version` is supplied, it must match the current `src/NativePad.rc` version.
 This keeps the installer name and uninstall metadata aligned with the executable.
 
@@ -47,6 +55,9 @@ The installer writes:
 - `NativePad.exe`.
 - `README.md`.
 - `LICENSE`.
+- `THIRD_PARTY_NOTICES.md`.
+- `licenses\` containing the framework and Darkmodelib licenses plus the
+  complete corresponding Darkmodelib source.
 - `docs\`.
 
 It also creates a Start Menu shortcut, offers an optional desktop shortcut, and

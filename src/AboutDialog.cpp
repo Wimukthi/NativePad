@@ -88,6 +88,7 @@ struct AboutDialogState {
     // app icon, and DPI-aware layout as the other NativePad dialogs.
     HWND hwnd{};
     HWND owner{};
+    HWND previousFocus{};
     HWND icon{};
     HWND title{};
     HWND description{};
@@ -179,23 +180,13 @@ void ApplyAboutDialogTheme(AboutDialogState* state) {
         return;
     }
 
-    ApplyDarkFrame(state->hwnd, state->dark);
-    for (HWND control : AboutDialogControls(state)) {
-        ApplyDialogControlTheme(control, state->dark);
+    state->dark = IsNativeThemeDark();
+    if (state->backgroundBrush != nullptr) {
+        DeleteObject(state->backgroundBrush);
     }
-}
-
-LRESULT AboutDialogCtlColor(AboutDialogState* state, WPARAM wParam) {
-    if (state == nullptr) {
-        return 0;
-    }
-
     const DialogColors colors = DialogColorsForTheme(state->dark);
-    HDC dc = reinterpret_cast<HDC>(wParam);
-    SetTextColor(dc, colors.text);
-    SetBkColor(dc, colors.background);
-    SetBkMode(dc, TRANSPARENT);
-    return reinterpret_cast<LRESULT>(state->backgroundBrush);
+    state->backgroundBrush = CreateSolidBrush(colors.background);
+    RefreshThemedDialog(state->hwnd);
 }
 
 void PaintAboutDialog(AboutDialogState* state) {
@@ -238,8 +229,6 @@ LRESULT CALLBACK AboutDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
     switch (message) {
     case WM_CREATE: {
-        const DialogColors colors = DialogColorsForTheme(state->dark);
-        state->backgroundBrush = CreateSolidBrush(colors.background);
         state->uiFont = CreateUiFontForDpi(state->dpi);
         state->titleFont = CreateAboutTitleFont(state->uiFont, state->dpi);
 
@@ -331,6 +320,14 @@ LRESULT CALLBACK AboutDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_SIZE:
         LayoutAboutDialog(state);
         return 0;
+    case WM_SETTINGCHANGE:
+        HandleThemeSettingChange(lParam);
+        ApplyAboutDialogTheme(state);
+        return 0;
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+        ApplyAboutDialogTheme(state);
+        return 0;
     case WM_PAINT:
         PaintAboutDialog(state);
         return 0;
@@ -341,17 +338,14 @@ LRESULT CALLBACK AboutDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         }
         if (LOWORD(wParam) == ID_HELP_CHECK_UPDATES) {
             PostMessageW(state->owner, WM_COMMAND, ID_HELP_CHECK_UPDATES, 0);
-            DestroyWindow(hwnd);
+            CloseModalWindow(hwnd, state->owner, state->previousFocus);
             return 0;
         }
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
-            DestroyWindow(hwnd);
+            CloseModalWindow(hwnd, state->owner, state->previousFocus);
             return 0;
         }
         break;
-    case WM_CTLCOLORSTATIC:
-    case WM_CTLCOLORBTN:
-        return AboutDialogCtlColor(state, wParam);
     case WM_ERASEBKGND: {
         RECT client{};
         GetClientRect(hwnd, &client);
@@ -359,7 +353,7 @@ LRESULT CALLBACK AboutDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 1;
     }
     case WM_CLOSE:
-        DestroyWindow(hwnd);
+        CloseModalWindow(hwnd, state->owner, state->previousFocus);
         return 0;
     case WM_NCDESTROY:
         if (state != nullptr) {
@@ -409,6 +403,7 @@ void ShowAboutDialog(HWND owner, HINSTANCE instance, UINT dpi, bool dark) {
 
     AboutDialogState state{};
     state.owner = owner;
+    state.previousFocus = GetFocus();
     state.instance = instance;
     state.dpi = static_cast<UINT>(effectiveDpi);
     state.dark = dark;
@@ -439,7 +434,7 @@ void ShowAboutDialog(HWND owner, HINSTANCE instance, UINT dpi, bool dark) {
     MSG message{};
     while (IsWindow(dialog) && GetMessageW(&message, nullptr, 0, 0) > 0) {
         if (MessageTargetsWindow(dialog, message) && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
-            DestroyWindow(dialog);
+            CloseModalWindow(dialog, state.owner, state.previousFocus);
             continue;
         }
         if (!IsDialogMessageW(dialog, &message)) {
@@ -448,9 +443,6 @@ void ShowAboutDialog(HWND owner, HINSTANCE instance, UINT dpi, bool dark) {
         }
     }
 
-    EnableWindow(owner, TRUE);
-    SetActiveWindow(owner);
-    SetFocus(owner);
 }
 
 } // namespace NativePad

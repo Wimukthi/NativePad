@@ -26,6 +26,7 @@ struct MessageButtonSpec {
 struct MessageDialogState {
     HWND hwnd{};
     HWND owner{};
+    HWND previousFocus{};
     HWND iconControl{};
     HWND messageControl{};
     std::array<HWND, 3> buttons{};
@@ -338,7 +339,7 @@ void CompleteMessageDialog(MessageDialogState* state, int result) {
     }
 
     state->result = result;
-    DestroyWindow(state->hwnd);
+    CloseModalWindow(state->hwnd, state->owner, state->previousFocus);
 }
 
 void LayoutMessageDialog(MessageDialogState* state) {
@@ -374,16 +375,33 @@ void LayoutMessageDialog(MessageDialogState* state) {
     }
 }
 
-LRESULT MessageDialogCtlColor(MessageDialogState* state, WPARAM wParam) {
+void ApplyMessageDialogTheme(MessageDialogState* state, bool rebuildIcon) {
     if (state == nullptr) {
-        return 0;
+        return;
     }
 
+    state->dark = IsNativeThemeDark();
     const DialogColors colors = DialogColorsForTheme(state->dark);
-    HDC dc = reinterpret_cast<HDC>(wParam);
-    SetTextColor(dc, colors.text);
-    SetBkColor(dc, colors.background);
-    return reinterpret_cast<LRESULT>(state->backgroundBrush);
+    if (state->backgroundBrush != nullptr) {
+        DeleteObject(state->backgroundBrush);
+    }
+    state->backgroundBrush = CreateSolidBrush(colors.background);
+
+    if (rebuildIcon && state->iconBitmap != nullptr && state->iconControl != nullptr) {
+        const int iconSize = ScaleForDpi(32, state->dpi);
+        HBITMAP replacement = CreateMessageIconBitmap(
+            state->instance,
+            state->icon,
+            iconSize,
+            colors.background);
+        if (replacement != nullptr) {
+            SendMessageW(state->iconControl, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(replacement));
+            DeleteObject(state->iconBitmap);
+            state->iconBitmap = replacement;
+        }
+    }
+
+    RefreshThemedDialog(state->hwnd);
 }
 
 LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -398,10 +416,10 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
 
     switch (message) {
     case WM_CREATE: {
+        state->dark = IsNativeThemeDark();
         const DialogColors colors = DialogColorsForTheme(state->dark);
         state->font = CreateUiFontForDpi(state->dpi);
         state->backgroundBrush = CreateSolidBrush(colors.background);
-        ApplyDarkFrame(hwnd, state->dark);
         ApplyWindowIcons(hwnd, state->instance);
 
         state->messageControl = CreateWindowExW(
@@ -474,8 +492,8 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
         std::array<HWND, 4> controls{state->messageControl, state->buttons[0], state->buttons[1], state->buttons[2]};
         for (HWND control : controls) {
             SetControlFont(control, state->font);
-            ApplyDialogControlTheme(control, state->dark);
         }
+        ApplyThemedDialog(hwnd);
 
         // Match MessageBox behavior: Yes/No prompts cannot be dismissed through
         // the close box because there is no unambiguous cancellation result.
@@ -492,9 +510,14 @@ LRESULT CALLBACK MessageDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
     case WM_SIZE:
         LayoutMessageDialog(state);
         return 0;
-    case WM_CTLCOLORSTATIC:
-    case WM_CTLCOLORBTN:
-        return MessageDialogCtlColor(state, wParam);
+    case WM_SETTINGCHANGE:
+        HandleThemeSettingChange(lParam);
+        ApplyMessageDialogTheme(state, true);
+        return 0;
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+        ApplyMessageDialogTheme(state, true);
+        return 0;
     case WM_ERASEBKGND: {
         if (state == nullptr) {
             return 1;
@@ -606,15 +629,16 @@ int ShowMessageDialog(
     const int y = anchor.top + ((anchor.bottom - anchor.top - windowHeight) / 2);
 
     if (!RegisterMessageDialogClass(instance)) {
-        return MessageBoxW(
+        return ShowThemedMessageBox(
             owner,
-            std::wstring(message).c_str(),
-            std::wstring(title).c_str(),
+            message,
+            title,
             FallbackFlags(icon, buttons, defaultResult));
     }
 
     MessageDialogState state{};
     state.owner = owner;
+    state.previousFocus = GetFocus();
     state.instance = instance;
     state.title = std::wstring(title);
     state.message = std::wstring(message);
@@ -641,10 +665,10 @@ int ShowMessageDialog(
         instance,
         &state);
     if (dialog == nullptr) {
-        return MessageBoxW(
+        return ShowThemedMessageBox(
             owner,
-            state.message.c_str(),
-            state.title.c_str(),
+            state.message,
+            state.title,
             FallbackFlags(icon, buttons, defaultResult));
     }
 
@@ -664,10 +688,6 @@ int ShowMessageDialog(
         }
     }
 
-    if (owner != nullptr) {
-        EnableWindow(owner, TRUE);
-        SetActiveWindow(owner);
-    }
     return state.result;
 }
 

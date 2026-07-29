@@ -9,8 +9,11 @@ of very large text files.
 - Native C++20 Win32 desktop application.
 - Visual Studio solution with app and test projects.
 - Custom DirectWrite editor view.
-- Native Win32 menu/dialog/window surface with custom dark-mode painting where
-  Windows controls do not theme cleanly.
+- Native Win32 menu/dialog/window surface with framework-themed standard
+  controls and focused custom painting for NativePad-specific surfaces.
+- Shared Windows dark-mode, standard-control subclassing, and High Contrast
+  integration through `Wimukthi.Win32Theme`, while retaining NativePad's
+  custom editor, menus, dialog layouts, and palette.
 - Per-monitor v2 DPI awareness.
 - Classic Notepad-style menus, accelerators, status bar, context menu, find,
   replace, go to, font, line numbers, page setup, and print workflows.
@@ -50,6 +53,10 @@ From a Visual Studio Developer PowerShell:
 MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
 
+The default layout expects the reusable `Wimukthi.Win32Theme` repository beside
+NativePad. Set `/p:WimukthiWin32ThemeRoot=D:\path\to\Wimukthi.Win32Theme` for a
+different checkout location.
+
 The executable is written to:
 
 ```text
@@ -67,4 +74,5 @@ Debug uses the same commands with `Configuration=Debug`.
 ## License
 
 NativePad is licensed under the GNU General Public License v3.0. See
-[LICENSE](LICENSE).
+[LICENSE](LICENSE). Dependency licenses are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

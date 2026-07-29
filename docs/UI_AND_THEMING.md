@@ -16,22 +16,28 @@ It owns:
 - Owner-draw status bar.
 - Dialog creation and command routing.
 
-Shared dark-mode plumbing — theme color palettes, DPI scaling, dark frame and
-control theming, and the owner-draw control helpers — lives in `src/UiSupport.*`
-and is reused by the shell and every custom dialog. Each dialog (Font, Find and
-Replace, Go To, About) is implemented in its own `src/*Dialog.*` module.
+NativePad-specific colour palettes, DPI scaling, and owner-draw helpers live in
+`src/UiSupport.*`. Generic Windows integration is provided by the sibling
+`Wimukthi.Win32Theme` framework. Each dialog (Font, Find and Replace, Go To,
+About) is implemented in its own `src/*Dialog.*` module.
 
 ## Dark Mode
 
 NativePad starts from the system app theme. The View menu can force dark/light,
 and that override is persisted under `%LOCALAPPDATA%\NativePad\NativePad.ini`.
 
-Dark-mode implementation uses:
+`Wimukthi.Win32Theme` owns:
 
-- DWM dark frame attributes.
-- `SetWindowTheme(..., L"DarkMode_Explorer", ...)` for native controls.
-- Owner-draw painting for menus, status bar, custom dialog controls, and problem
-  areas where Windows still paints light fragments.
+- Windows-version and undocumented UxTheme handling.
+- Process and per-window dark-mode opt-in.
+- DWM title-bar and native common-control theming.
+- Runtime system-theme notifications and High Contrast fallback.
+
+NativePad retains owner-draw painting for its editor, menu strip, popup menus,
+status bar, dialog backgrounds, and the Font sample preview. Standard dialog
+controls are themed and subclassed by the framework. In High Contrast, custom
+surfaces use `GetSysColor` values and the framework restores native system
+control rendering.
 
 Color palettes are centralized in:
 
@@ -56,10 +62,13 @@ NativePad currently has custom dialogs for:
 - Font.
 - Message prompts.
 
-They use normal child controls where possible, with custom parent-painted
-backgrounds and borders.
-The About dialog also exposes update checking controls; those controls reuse the
-same button and checkbox theming as the rest of the custom dialogs.
+They use standard Win32 child controls attached through
+`Wimukthi.Win32Theme`. Command buttons, default buttons, check boxes, radio
+buttons, group boxes, text boxes, read-only text boxes, static labels, list
+boxes, and list-box scrollbars all use the shared framework's theme classes,
+subclasses, colors, focus states, disabled states, and High Contrast fallback.
+The About dialog's update button and automatic-update checkbox use the same
+framework path.
 NativePad-owned confirmations, errors, and informational prompts use
 `MessageDialog` so Yes/No and save prompts follow the app theme. OS-owned common
 file, page setup, and print dialogs remain native.
@@ -71,11 +80,15 @@ and can read as extra window chrome.
 
 Important conventions:
 
-- Parent windows draw edit/list borders with `DrawDialogChildBorder`.
-- Edit/list controls are inset with `MoveBorderedControl`.
+- Call `ApplyThemedDialog` after all child controls are created.
+- Call `RefreshThemedDialog` after live theme or system-colour changes.
+- Edit and list controls use the single-pixel `WS_BORDER` style. Avoid
+  `WS_EX_CLIENTEDGE` here because it opts into the framework's wider
+  non-client focus/hover border, which is intended for roomier form layouts.
 - Controls use `WS_CLIPSIBLINGS` where resize paint artifacts are likely.
-- Owner-draw toggles and list boxes are used when native dark-mode painting is
-  unreliable.
+- Do not add dialog-local owner-draw implementations for standard controls.
+  Extend `Wimukthi.Win32Theme` when a reusable control needs additional
+  coverage.
 
 ## Menu Strip and Popup Menus
 
@@ -108,8 +121,9 @@ Line numbers are an optional View-menu gutter. They are visual-only, right
 aligned, DPI/font-aware, and use an arrow cursor over the gutter rather than the
 text insertion cursor.
 
-The editor uses native scrollbars. Native scrollbar dark-mode support depends on
-Windows theme behavior, so scrollbar regressions should be tested manually.
+The editor uses native scrollbars with its theme class applied through the
+shared framework. Scrollbar regressions should still be tested manually across
+supported Windows versions.
 
 The status bar is owner-drawn and reports current line, column, total logical
 line count, encoding, read-only state where applicable, file size, and character
@@ -121,10 +135,13 @@ editor text area.
 When changing UI code, test:
 
 - Dark and light mode.
+- Windows High Contrast.
 - 100%, 125%, 150%, and mixed-DPI monitor moves.
 - Resizing dialogs.
 - Message prompt icons at 150% and 200% DPI.
-- Scrolling owner-draw list boxes.
+- Scrolling themed list boxes and their focus/selection states.
+- Hover, pressed, default, disabled, and keyboard-focus states for buttons.
+- Checked, unchecked, focus, and disabled states for check/radio controls.
 - Popup menu hover, disabled items, and separators.
 - Context menu over the editor.
 - Arrow cursor over custom popup menus, including editor context menus.

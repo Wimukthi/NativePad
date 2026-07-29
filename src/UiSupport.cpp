@@ -1,24 +1,18 @@
 #include "UiSupport.h"
 
-#include <dwmapi.h>
-#include <uxtheme.h>
-
-#include <algorithm>
-
 #include "resource.h"
-
-// Older Windows SDKs lack this attribute constant; current SDKs expose it as a
-// DWMWINDOWATTRIBUTE enumerator. The fallback is defined after <dwmapi.h> so it
-// never rewrites the enum declaration on SDKs that already provide it.
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
+#include <wimukthi/win32_theme.hpp>
 
 namespace NativePad {
 
 namespace {
 
-constexpr DWORD kDarkModeBefore20H1 = 19;
+wimukthi::win32_theme::AttachOptions DialogThemeOptions() {
+    wimukthi::win32_theme::AttachOptions options;
+    options.menu_bar = false;
+    options.erase_background = false;
+    return options;
+}
 
 } // namespace
 
@@ -81,6 +75,25 @@ void ApplyWindowIcons(HWND hwnd, HINSTANCE instance) {
 ThemeColors ColorsForTheme(bool dark) {
     // Keep application chrome colors centralized so owner-draw menus, status bar,
     // dialogs, and editor background move together when dark mode changes.
+    if (IsHighContrastMode()) {
+        return {
+            GetSysColor(COLOR_WINDOW),
+            GetSysColor(COLOR_WINDOWTEXT),
+            GetSysColor(COLOR_BTNFACE),
+            GetSysColor(COLOR_BTNTEXT),
+            GetSysColor(COLOR_WINDOWFRAME),
+            GetSysColor(COLOR_MENU),
+            GetSysColor(COLOR_HIGHLIGHT),
+            GetSysColor(COLOR_HIGHLIGHT),
+            GetSysColor(COLOR_MENUTEXT),
+            GetSysColor(COLOR_GRAYTEXT),
+            GetSysColor(COLOR_WINDOWFRAME),
+            GetSysColor(COLOR_WINDOWFRAME),
+            GetSysColor(COLOR_BTNFACE),
+            GetSysColor(COLOR_BTNTEXT),
+        };
+    }
+
     if (dark) {
         return {
             RGB(30, 30, 30),
@@ -146,37 +159,29 @@ std::wstring GetLastErrorText(DWORD error) {
 }
 
 bool IsSystemDarkMode() {
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    const LSTATUS status = RegGetValueW(
-        HKEY_CURRENT_USER,
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-        L"AppsUseLightTheme",
-        RRF_RT_REG_DWORD,
-        nullptr,
-        &value,
-        &size);
+    return wimukthi::win32_theme::system_prefers_dark();
+}
 
-    return status == ERROR_SUCCESS && value == 0;
+bool IsHighContrastMode() {
+    return wimukthi::win32_theme::is_high_contrast();
+}
+
+bool HandleThemeSettingChange(LPARAM lparam) {
+    return wimukthi::win32_theme::handle_setting_change(lparam);
+}
+
+bool IsNativeThemeDark() {
+    return wimukthi::win32_theme::is_dark();
 }
 
 void ApplyDarkFrame(HWND hwnd, bool dark) {
-    BOOL enabled = dark ? TRUE : FALSE;
-    HRESULT result = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &enabled, sizeof(enabled));
-    if (FAILED(result)) {
-        DwmSetWindowAttribute(hwnd, kDarkModeBefore20H1, &enabled, sizeof(enabled));
-    }
+    (void)dark;
+    wimukthi::win32_theme::apply_title_bar(hwnd);
 }
 
 void ApplyDarkControlTheme(HWND hwnd, bool dark) {
-    // DarkMode_Explorer is an undocumented but commonly used Windows theme name.
-    // Owner-draw code still supplies exact colors where native theming falls short.
-    if (hwnd == nullptr) {
-        return;
-    }
-
-    SetWindowTheme(hwnd, dark ? L"DarkMode_Explorer" : nullptr, nullptr);
-    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+    (void)dark;
+    wimukthi::win32_theme::apply_control(hwnd);
 }
 
 void SetControlFont(HWND control, HFONT font) {
@@ -208,8 +213,21 @@ void SetControlText(HWND control, std::wstring_view text) {
 }
 
 DialogColors DialogColorsForTheme(bool dark) {
-    // Custom dialogs share this palette so borders, edit controls, owner-draw
-    // toggles, and list boxes do not drift into different dark-mode shades.
+    // Custom dialog surfaces and framework-themed standard controls share this
+    // palette so the application does not develop competing dark-mode shades.
+    if (IsHighContrastMode()) {
+        return {
+            GetSysColor(COLOR_BTNFACE),
+            GetSysColor(COLOR_BTNTEXT),
+            GetSysColor(COLOR_WINDOW),
+            GetSysColor(COLOR_HIGHLIGHT),
+            GetSysColor(COLOR_HIGHLIGHTTEXT),
+            GetSysColor(COLOR_GRAYTEXT),
+            GetSysColor(COLOR_WINDOWFRAME),
+            GetSysColor(COLOR_HOTLIGHT),
+        };
+    }
+
     if (dark) {
         return {
             RGB(31, 31, 31),
@@ -235,54 +253,83 @@ DialogColors DialogColorsForTheme(bool dark) {
     };
 }
 
-void ApplyDialogControlTheme(HWND control, bool dark) {
-    if (control != nullptr) {
-        ApplyDarkControlTheme(control, dark);
+bool ConfigureNativeTheme(bool requestedDark, bool followSystem) {
+    using namespace wimukthi::win32_theme;
+
+    const bool paletteDark = followSystem ? IsSystemDarkMode() : requestedDark;
+    const ThemeColors chrome = ColorsForTheme(paletteDark);
+    const DialogColors dialog = DialogColorsForTheme(paletteDark);
+
+    Configuration configuration;
+    configuration.mode =
+        followSystem ? Mode::system : (requestedDark ? Mode::dark : Mode::light);
+    configuration.use_custom_palette = !IsHighContrastMode();
+    configuration.palette = {
+        chrome.editorBackground,
+        dialog.controlBackground,
+        chrome.menuHot,
+        dialog.background,
+        paletteDark ? RGB(78, 36, 36) : RGB(255, 240, 240),
+        dialog.text,
+        chrome.menuDisabledText,
+        dialog.disabledText,
+        dialog.focusBorder,
+        dialog.border,
+        dialog.focusBorder,
+        chrome.separator,
+        dialog.selectionBackground,
+        chrome.editorBackground,
+        chrome.editorText,
+        chrome.editorLineNumberSeparator,
+        chrome.menuBackground,
+        chrome.menuHot,
+        chrome.menuText,
+        chrome.menuBorder,
+    };
+    configure(configuration);
+    return is_dark();
+}
+
+void ApplyThemedDialog(HWND dialog) {
+    if (dialog != nullptr) {
+        wimukthi::win32_theme::attach(dialog, DialogThemeOptions());
     }
 }
 
-void MoveBorderedControl(HWND control, int x, int y, int width, int height) {
-    // Parent windows draw the one-pixel border for dark-mode consistency. Child
-    // edit/list controls are inset so their native client area never covers it.
-    if (control == nullptr) {
-        return;
+void RefreshThemedDialog(HWND dialog) {
+    if (dialog != nullptr) {
+        wimukthi::win32_theme::refresh(dialog, DialogThemeOptions());
     }
+}
 
-    constexpr int border = 1;
-    MoveWindow(
-        control,
-        x + border,
-        y + border,
-        std::max(0, width - (border * 2)),
-        std::max(0, height - (border * 2)),
-        TRUE);
+int ShowThemedMessageBox(HWND owner, std::wstring_view text, std::wstring_view caption, UINT type) {
+    const std::wstring textCopy(text);
+    const std::wstring captionCopy(caption);
+    return wimukthi::win32_theme::message_box(owner, textCopy.c_str(), captionCopy.c_str(), type);
 }
 
 bool MessageTargetsWindow(HWND hwnd, const MSG& message) {
     return hwnd != nullptr && (message.hwnd == hwnd || IsChild(hwnd, message.hwnd));
 }
 
-void DrawControlBorder(HDC hdc, RECT rect, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    FrameRect(hdc, &rect, brush);
-    DeleteObject(brush);
-}
-
-void DrawDialogChildBorder(HWND parent, HWND child, HDC hdc, const DialogColors& colors) {
-    if (parent == nullptr || child == nullptr || hdc == nullptr) {
-        return;
+void CloseModalWindow(HWND dialog, HWND owner, HWND previousFocus) {
+    // Restore the owner before destroying its active owned window. Destroying
+    // first leaves USER32 with no enabled activation target, so the owner frame
+    // briefly deactivates and activates again after EnableWindow.
+    if (owner != nullptr && IsWindow(owner)) {
+        EnableWindow(owner, TRUE);
+        SetActiveWindow(owner);
+        if (previousFocus != nullptr &&
+            IsWindow(previousFocus) &&
+            (previousFocus == owner || IsChild(owner, previousFocus)) &&
+            IsWindowEnabled(previousFocus)) {
+            SetFocus(previousFocus);
+        }
     }
 
-    RECT rect{};
-    if (!GetWindowRect(child, &rect)) {
-        return;
+    if (dialog != nullptr && IsWindow(dialog)) {
+        DestroyWindow(dialog);
     }
-    MapWindowPoints(HWND_DESKTOP, parent, reinterpret_cast<POINT*>(&rect), 2);
-    InflateRect(&rect, 1, 1);
-
-    HWND focus = GetFocus();
-    const bool focused = focus == child || IsChild(child, focus);
-    DrawControlBorder(hdc, rect, focused ? colors.focusBorder : colors.border);
 }
 
 } // namespace NativePad

@@ -6,6 +6,8 @@
 - Visual Studio 2026 or compatible MSVC toolchain.
 - Windows 10 SDK or newer.
 - x64 target platform.
+- A `Wimukthi.Win32Theme` checkout beside NativePad. The default layout is
+  `Software\Wimukthi.Win32Theme` and `Software\NativePad`.
 
 The solution uses:
 
@@ -32,6 +34,16 @@ Release:
 ```powershell
 MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
+
+For a different framework location, pass:
+
+```powershell
+MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /p:WimukthiWin32ThemeRoot=D:\Libraries\Wimukthi.Win32Theme /m
+```
+
+`NativePad.vcxproj` imports `Wimukthi.Win32Theme.props`, which adds the shared
+facade, pinned Darkmodelib sources, include paths, definitions, and Windows
+libraries. The test project remains independent of UI theming.
 
 If `MSBuild.exe` is not on PATH, use the installed Visual Studio path, for
 example:
@@ -139,6 +151,7 @@ Manual testing is still needed for:
 - Window/dialog painting.
 - DPI changes across monitors.
 - Dark/light mode.
+- Windows High Contrast.
 - Print output.
 - File dialogs and drag/drop open.
 - Very large real-world files.

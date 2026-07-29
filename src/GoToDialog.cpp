@@ -17,10 +17,11 @@ constexpr wchar_t kGoToDialogClass[] = L"NativePadGoToDialog";
 constexpr int kGoToEditId = 50001;
 
 struct GoToDialogState {
-    // Custom modal Go To dialog state. The dialog uses the same parent-painted
-    // borders and dark-control theme as Find/Replace and Font.
+    // Custom modal Go To dialog state. Standard child controls are attached to
+    // the shared theme framework just like Find/Replace and Font.
     HWND hwnd{};
     HWND owner{};
+    HWND previousFocus{};
     HWND label{};
     HWND edit{};
     HWND rangeLabel{};
@@ -29,7 +30,6 @@ struct GoToDialogState {
     HINSTANCE instance{};
     HFONT font{};
     HBRUSH backgroundBrush{};
-    HBRUSH controlBrush{};
     UINT dpi{USER_DEFAULT_SCREEN_DPI};
     size_t currentLine{1};
     size_t maxLine{1};
@@ -70,7 +70,7 @@ void LayoutGoToDialog(GoToDialogState* state) {
     const int buttonTop = client.bottom - margin - buttonHeight;
 
     MoveWindow(state->label, margin, margin, width - (margin * 2), labelHeight, TRUE);
-    MoveBorderedControl(state->edit, margin, margin + labelHeight + ScaleForDpi(4, state->dpi), width - (margin * 2), editHeight);
+    MoveWindow(state->edit, margin, margin + labelHeight + ScaleForDpi(4, state->dpi), width - (margin * 2), editHeight, TRUE);
     MoveWindow(state->rangeLabel, margin, margin + labelHeight + editHeight + ScaleForDpi(8, state->dpi), width - (margin * 2), hintHeight, TRUE);
     MoveWindow(state->cancel, width - margin - buttonWidth, buttonTop, buttonWidth, buttonHeight, TRUE);
     MoveWindow(state->ok, width - margin - (buttonWidth * 2) - gap, buttonTop, buttonWidth, buttonHeight, TRUE);
@@ -114,39 +114,20 @@ bool TryReadGoToLine(GoToDialogState* state, size_t& line) {
     return true;
 }
 
-LRESULT GoToDialogCtlColor(GoToDialogState* state, UINT message, WPARAM wParam) {
-    if (state == nullptr) {
-        return 0;
-    }
-
-    const DialogColors colors = DialogColorsForTheme(state->dark);
-    HDC dc = reinterpret_cast<HDC>(wParam);
-    SetTextColor(dc, colors.text);
-    SetBkMode(dc, TRANSPARENT);
-
-    if (message == WM_CTLCOLOREDIT) {
-        SetBkColor(dc, colors.controlBackground);
-        return reinterpret_cast<LRESULT>(state->controlBrush);
-    }
-
-    SetBkColor(dc, colors.background);
-    return reinterpret_cast<LRESULT>(state->backgroundBrush);
-}
-
 void ApplyGoToDialogTheme(GoToDialogState* state) {
     if (state == nullptr) {
         return;
     }
 
-    ApplyDarkFrame(state->hwnd, state->dark);
-    for (HWND control : GoToDialogControls(state)) {
-        ApplyDialogControlTheme(control, state->dark);
+    state->dark = IsNativeThemeDark();
+    if (state->backgroundBrush != nullptr) {
+        DeleteObject(state->backgroundBrush);
     }
+    state->backgroundBrush = CreateSolidBrush(DialogColorsForTheme(state->dark).background);
+    RefreshThemedDialog(state->hwnd);
 }
 
 void PaintGoToDialog(GoToDialogState* state) {
-    // The edit border is drawn by the parent to avoid the light client-edge
-    // border that Windows still applies to some themed edit controls.
     if (state == nullptr || state->hwnd == nullptr) {
         return;
     }
@@ -157,9 +138,7 @@ void PaintGoToDialog(GoToDialogState* state) {
         return;
     }
 
-    const DialogColors colors = DialogColorsForTheme(state->dark);
     FillRect(hdc, &ps.rcPaint, state->backgroundBrush);
-    DrawDialogChildBorder(state->hwnd, state->edit, hdc, colors);
     EndPaint(state->hwnd, &ps);
 }
 
@@ -175,16 +154,13 @@ LRESULT CALLBACK GoToDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
 
     switch (message) {
     case WM_CREATE: {
-        const DialogColors colors = DialogColorsForTheme(state->dark);
-        state->backgroundBrush = CreateSolidBrush(colors.background);
-        state->controlBrush = CreateSolidBrush(colors.controlBackground);
         state->font = CreateUiFontForDpi(state->dpi);
         state->label = CreateWindowExW(0, L"STATIC", L"Line number:", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
         state->edit = CreateWindowExW(
             0,
             L"EDIT",
             nullptr,
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
             0,
             0,
             0,
@@ -214,6 +190,14 @@ LRESULT CALLBACK GoToDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
     case WM_SIZE:
         LayoutGoToDialog(state);
         return 0;
+    case WM_SETTINGCHANGE:
+        HandleThemeSettingChange(lParam);
+        ApplyGoToDialogTheme(state);
+        return 0;
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+        ApplyGoToDialogTheme(state);
+        return 0;
     case WM_PAINT:
         PaintGoToDialog(state);
         return 0;
@@ -222,20 +206,16 @@ LRESULT CALLBACK GoToDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
         case IDOK:
             if (TryReadGoToLine(state, state->selectedLine)) {
                 state->accepted = true;
-                DestroyWindow(hwnd);
+                CloseModalWindow(hwnd, state->owner, state->previousFocus);
             }
             return 0;
         case IDCANCEL:
-            DestroyWindow(hwnd);
+            CloseModalWindow(hwnd, state->owner, state->previousFocus);
             return 0;
         default:
             break;
         }
         break;
-    case WM_CTLCOLOREDIT:
-    case WM_CTLCOLORSTATIC:
-    case WM_CTLCOLORBTN:
-        return GoToDialogCtlColor(state, message, wParam);
     case WM_ERASEBKGND: {
         RECT client{};
         GetClientRect(hwnd, &client);
@@ -243,7 +223,7 @@ LRESULT CALLBACK GoToDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
         return 1;
     }
     case WM_CLOSE:
-        DestroyWindow(hwnd);
+        CloseModalWindow(hwnd, state->owner, state->previousFocus);
         return 0;
     case WM_NCDESTROY:
         DeleteUiFont(state != nullptr ? state->font : nullptr);
@@ -251,12 +231,8 @@ LRESULT CALLBACK GoToDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
             if (state->backgroundBrush != nullptr) {
                 DeleteObject(state->backgroundBrush);
             }
-            if (state->controlBrush != nullptr) {
-                DeleteObject(state->controlBrush);
-            }
             state->font = nullptr;
             state->backgroundBrush = nullptr;
-            state->controlBrush = nullptr;
         }
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         return 0;
@@ -292,6 +268,7 @@ std::optional<std::size_t> ShowGoToLineDialog(HWND owner, HINSTANCE instance, UI
 
     GoToDialogState state{};
     state.owner = owner;
+    state.previousFocus = GetFocus();
     state.instance = instance;
     state.dpi = dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi;
     state.currentLine = std::max<size_t>(1, currentLine);
@@ -324,7 +301,7 @@ std::optional<std::size_t> ShowGoToLineDialog(HWND owner, HINSTANCE instance, UI
     MSG message{};
     while (IsWindow(dialog) && GetMessageW(&message, nullptr, 0, 0) > 0) {
         if (MessageTargetsWindow(dialog, message) && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
-            DestroyWindow(dialog);
+            CloseModalWindow(dialog, state.owner, state.previousFocus);
             continue;
         }
         if (!IsDialogMessageW(dialog, &message)) {
@@ -332,10 +309,6 @@ std::optional<std::size_t> ShowGoToLineDialog(HWND owner, HINSTANCE instance, UI
             DispatchMessageW(&message);
         }
     }
-
-    EnableWindow(owner, TRUE);
-    SetActiveWindow(owner);
-    SetFocus(owner);
 
     if (state.accepted) {
         return state.selectedLine;

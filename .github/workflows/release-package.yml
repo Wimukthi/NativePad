@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Expected app version after the build auto-increments src/NativePad.rc
+        description: Expected version already committed in src/NativePad.rc
         required: true
 
 jobs:
@@ -13,23 +13,34 @@ jobs:
     runs-on: windows-2025-vs2026
 
     steps:
-      - name: Checkout
+      - name: Checkout NativePad
         uses: actions/checkout@v6
+        with:
+          path: NativePad
+
+      - name: Checkout Wimukthi.Win32Theme
+        uses: actions/checkout@v6
+        with:
+          repository: Wimukthi/Wimukthi.Win32Theme
+          path: Wimukthi.Win32Theme
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v3
 
       - name: Build Release
+        working-directory: NativePad
         # Do not auto-increment here: the release version is the value already
         # committed in src/NativePad.rc, so the packaged build must not bump it.
         run: msbuild NativePad.sln /p:Configuration=Release /p:Platform=x64 /p:AutoIncrementVersion=false /m
 
       - name: Test Release
+        working-directory: NativePad
         run: .\bin\x64\Release\NativePad.Tests.exe
 
       - name: Resolve Package Version
         id: package-version
         shell: pwsh
+        working-directory: NativePad
         run: |
           $version = .\tools\Update-NativePadVersion.ps1 -PrintVersion
           $expected = "${{ inputs.version }}"
@@ -41,6 +52,7 @@ jobs:
 
       - name: Create ZIP
         shell: pwsh
+        working-directory: NativePad
         run: |
           $version = $env:PACKAGE_VERSION
           $stage = Join-Path $env:RUNNER_TEMP "NativePad-$version-win-x64"
@@ -51,7 +63,14 @@ jobs:
           Copy-Item -LiteralPath ".\bin\x64\Release\NativePad.exe" -Destination $stage
           Copy-Item -LiteralPath ".\README.md" -Destination $stage
           Copy-Item -LiteralPath ".\LICENSE" -Destination $stage
+          Copy-Item -LiteralPath ".\THIRD_PARTY_NOTICES.md" -Destination $stage
           Copy-Item -LiteralPath ".\docs" -Destination (Join-Path $stage "docs") -Recurse
+          $licenses = New-Item -ItemType Directory -Path (Join-Path $stage "licenses") -Force
+          Copy-Item -LiteralPath "..\Wimukthi.Win32Theme\LICENSE" -Destination (Join-Path $licenses "Wimukthi.Win32Theme-MIT.txt")
+          Copy-Item -LiteralPath "..\Wimukthi.Win32Theme\third_party\darkmodelib\LICENSE.md" -Destination (Join-Path $licenses "Darkmodelib-MPL-2.0.txt")
+          Copy-Item -LiteralPath "..\Wimukthi.Win32Theme\third_party\darkmodelib\LICENSE-MIT.md" -Destination (Join-Path $licenses "Darkmodelib-MIT.txt")
+          $source = New-Item -ItemType Directory -Path (Join-Path $licenses "source") -Force
+          Copy-Item -LiteralPath "..\Wimukthi.Win32Theme\third_party\darkmodelib" -Destination $source -Recurse
 
           Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
 
@@ -61,18 +80,19 @@ jobs:
 
       - name: Create Installer
         shell: pwsh
+        working-directory: NativePad
         run: .\installer\build-installer.ps1 -Version "$env:PACKAGE_VERSION" -SkipBuild -SkipTests
 
       - name: Upload ZIP
         uses: actions/upload-artifact@v7
         with:
           name: NativePad-${{ steps.package-version.outputs.version }}-win-x64
-          path: NativePad-${{ steps.package-version.outputs.version }}-win-x64.zip
+          path: NativePad\NativePad-${{ steps.package-version.outputs.version }}-win-x64.zip
           if-no-files-found: error
 
       - name: Upload Installer
         uses: actions/upload-artifact@v7
         with:
           name: NativePad-${{ steps.package-version.outputs.version }}-installer-win-x64
-          path: installer\output\NativePadSetup-${{ steps.package-version.outputs.version }}-win-x64.exe
+          path: NativePad\installer\output\NativePadSetup-${{ steps.package-version.outputs.version }}-win-x64.exe
           if-no-files-found: error

@@ -1,15 +1,17 @@
 # Architecture
 
-NativePad is a single-process C++20 Win32 application. It avoids framework-level
-UI abstractions so startup, native widgets, dark-mode handling, and large-file
-behavior remain explicit.
+NativePad is a single-process C++20 Win32 application. It avoids a general
+widget framework so startup, native widgets, custom painting, and large-file
+behavior remain explicit. `Wimukthi.Win32Theme` supplies the reusable
+Windows-integration layer for dark mode and High Contrast.
 
 ## Main Components
 
 | Component | Files | Responsibility |
 | --- | --- | --- |
 | Application shell | `src/main.cpp` | `AppWindow` main window: menu strip, status bar, command routing, document/dirty state, preference load/save |
-| Shared UI support | `src/UiSupport.h`, `src/UiSupport.cpp` | Theme palettes, DPI scaling, dark-mode framing, and common control helpers used by the shell and every dialog |
+| Shared UI support | `src/UiSupport.h`, `src/UiSupport.cpp` | NativePad palettes and DPI/control helpers; delegates Windows theme integration to `Wimukthi.Win32Theme` |
+| Windows theme framework | sibling `Wimukthi.Win32Theme` repository | Process/window dark-mode opt-in, native control theming, system-theme changes, Windows-version handling, and High Contrast fallback |
 | Popup menus | `src/PopupMenu.h`, `src/PopupMenu.cpp` | Owner-drawn dark menu and context-menu windows plus the drop shadow |
 | File codec | `src/FileCodec.h`, `src/FileCodec.cpp` | Encoding detection, file read/write, large-file preview, and open/save pickers |
 | Printing | `src/Printing.h`, `src/Printing.cpp` | Threaded pagination/spooling worker |
@@ -30,8 +32,9 @@ behavior remain explicit.
 The application shell is split into focused translation units rather than one
 large `main.cpp`. Each dialog and feature area lives in its own file and exposes
 a minimal header (for example, `ShowFontDialog`, `ShowGoToLineDialog`,
-`StartPrintWorker`). Cross-cutting Win32 helpers — theming, DPI scaling, and
-control styling — are shared through `UiSupport`. `main.cpp` retains only
+`StartPrintWorker`). Cross-cutting application helpers such as DPI scaling,
+palette selection, and control styling are shared through `UiSupport`; generic
+Windows theming is delegated to `Wimukthi.Win32Theme`. `main.cpp` retains only
 `AppWindow`, `wWinMain`, and shell-only helpers.
 
 ## UI Ownership

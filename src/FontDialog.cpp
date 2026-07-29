@@ -60,10 +60,11 @@ constexpr std::array<FontStyleChoice, 4> kFontStyleChoices{{
 }};
 
 struct FontDialogState {
-    // Custom replacement for ChooseFont. It gives us control over dark-mode list
-    // painting, DPI layout, and the resizable sample preview.
+    // Custom replacement for ChooseFont. The framework themes its standard
+    // controls while NativePad owns DPI layout and the resizable sample preview.
     HWND hwnd{};
     HWND owner{};
+    HWND previousFocus{};
     HWND familyLabel{};
     HWND familyEdit{};
     HWND familyList{};
@@ -81,7 +82,6 @@ struct FontDialogState {
     HFONT uiFont{};
     HFONT previewFont{};
     HBRUSH backgroundBrush{};
-    HBRUSH controlBrush{};
     UINT dpi{USER_DEFAULT_SCREEN_DPI};
     bool dark{false};
     bool accepted{false};
@@ -380,16 +380,16 @@ void LayoutFontDialog(FontDialogState* state) {
     const int listHeight = std::clamp(listMinHeight + (extraHeight / 2), listMinHeight, listMaxHeight);
 
     MoveWindow(state->familyLabel, margin, top, familyWidth, labelHeight, TRUE);
-    MoveBorderedControl(state->familyEdit, margin, editTop, familyWidth, editHeight);
-    MoveBorderedControl(state->familyList, margin, listTop, familyWidth, listHeight);
+    MoveWindow(state->familyEdit, margin, editTop, familyWidth, editHeight, TRUE);
+    MoveWindow(state->familyList, margin, listTop, familyWidth, listHeight, TRUE);
 
     MoveWindow(state->styleLabel, styleLeft, top, styleWidth, labelHeight, TRUE);
-    MoveBorderedControl(state->styleEdit, styleLeft, editTop, styleWidth, editHeight);
-    MoveBorderedControl(state->styleList, styleLeft, listTop, styleWidth, listHeight);
+    MoveWindow(state->styleEdit, styleLeft, editTop, styleWidth, editHeight, TRUE);
+    MoveWindow(state->styleList, styleLeft, listTop, styleWidth, listHeight, TRUE);
 
     MoveWindow(state->sizeLabel, sizeLeft, top, sizeWidth, labelHeight, TRUE);
-    MoveBorderedControl(state->sizeEdit, sizeLeft, editTop, sizeWidth, editHeight);
-    MoveBorderedControl(state->sizeList, sizeLeft, listTop, sizeWidth, listHeight);
+    MoveWindow(state->sizeEdit, sizeLeft, editTop, sizeWidth, editHeight, TRUE);
+    MoveWindow(state->sizeList, sizeLeft, listTop, sizeWidth, listHeight, TRUE);
 
     const int sampleLabelTop = listTop + listHeight + ScaleForDpi(6, state->dpi);
     const int sampleTop = sampleLabelTop + labelHeight + ScaleForDpi(4, state->dpi);
@@ -402,25 +402,6 @@ void LayoutFontDialog(FontDialogState* state) {
     MoveWindow(state->cancel, clientWidth - margin - buttonWidth, buttonTop, buttonWidth, buttonHeight, TRUE);
     MoveWindow(state->ok, clientWidth - margin - (buttonWidth * 2) - gap, buttonTop, buttonWidth, buttonHeight, TRUE);
     RedrawFontDialogAfterLayout(state);
-}
-
-LRESULT FontDialogCtlColor(FontDialogState* state, UINT message, WPARAM wParam) {
-    if (state == nullptr) {
-        return 0;
-    }
-
-    const DialogColors colors = DialogColorsForTheme(state->dark);
-    HDC dc = reinterpret_cast<HDC>(wParam);
-    SetTextColor(dc, colors.text);
-    SetBkMode(dc, TRANSPARENT);
-
-    if (message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX) {
-        SetBkColor(dc, colors.controlBackground);
-        return reinterpret_cast<LRESULT>(state->controlBrush);
-    }
-
-    SetBkColor(dc, colors.background);
-    return reinterpret_cast<LRESULT>(state->backgroundBrush);
 }
 
 void DrawFontPreview(FontDialogState* state, DRAWITEMSTRUCT* draw) {
@@ -451,73 +432,17 @@ void DrawFontPreview(FontDialogState* state, DRAWITEMSTRUCT* draw) {
     SelectObject(draw->hDC, oldFont);
 }
 
-bool IsFontDialogListId(UINT id) {
-    return id == kFontFamilyListId || id == kFontStyleListId || id == kFontSizeListId;
-}
-
-void DrawFontListItem(FontDialogState* state, DRAWITEMSTRUCT* draw) {
-    // Owner-draw avoids light listbox backgrounds and stale native focus marks
-    // while scrolling or resizing in dark mode.
-    if (state == nullptr || draw == nullptr) {
-        return;
-    }
-
-    const DialogColors colors = DialogColorsForTheme(state->dark);
-    const bool selected = (draw->itemState & ODS_SELECTED) != 0;
-    const bool disabled = (draw->itemState & ODS_DISABLED) != 0;
-    const COLORREF backgroundColor = selected ? colors.selectionBackground : colors.controlBackground;
-    const COLORREF textColor = disabled ? colors.disabledText : (selected ? colors.selectionText : colors.text);
-
-    HBRUSH background = CreateSolidBrush(backgroundColor);
-    FillRect(draw->hDC, &draw->rcItem, background);
-    DeleteObject(background);
-
-    if (draw->itemID != static_cast<UINT>(-1)) {
-        const LRESULT length = SendMessageW(draw->hwndItem, LB_GETTEXTLEN, draw->itemID, 0);
-        if (length != LB_ERR) {
-            std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-            SendMessageW(draw->hwndItem, LB_GETTEXT, draw->itemID, reinterpret_cast<LPARAM>(text.data()));
-            text.resize(static_cast<size_t>(length));
-
-            HFONT font = state->uiFont != nullptr ? state->uiFont : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-            HGDIOBJ oldFont = SelectObject(draw->hDC, font);
-            SetBkMode(draw->hDC, TRANSPARENT);
-            SetTextColor(draw->hDC, textColor);
-            RECT textRect = draw->rcItem;
-            textRect.left += ScaleForDpi(4, state->dpi);
-            textRect.right -= ScaleForDpi(4, state->dpi);
-            DrawTextW(draw->hDC, text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-            SelectObject(draw->hDC, oldFont);
-        }
-    }
-}
-
 void ApplyFontDialogTheme(FontDialogState* state) {
     if (state == nullptr) {
         return;
     }
 
-    ApplyDarkFrame(state->hwnd, state->dark);
-    const std::array<HWND, 15> controls{
-        state->familyLabel,
-        state->familyEdit,
-        state->familyList,
-        state->styleLabel,
-        state->styleEdit,
-        state->styleList,
-        state->sizeLabel,
-        state->sizeEdit,
-        state->sizeList,
-        state->sampleLabel,
-        state->sample,
-        state->ok,
-        state->cancel,
-        nullptr,
-        nullptr,
-    };
-    for (HWND control : controls) {
-        ApplyDialogControlTheme(control, state->dark);
+    state->dark = IsNativeThemeDark();
+    if (state->backgroundBrush != nullptr) {
+        DeleteObject(state->backgroundBrush);
     }
+    state->backgroundBrush = CreateSolidBrush(DialogColorsForTheme(state->dark).background);
+    RefreshThemedDialog(state->hwnd);
 }
 
 void PaintFontDialog(FontDialogState* state) {
@@ -531,14 +456,7 @@ void PaintFontDialog(FontDialogState* state) {
         return;
     }
 
-    const DialogColors colors = DialogColorsForTheme(state->dark);
     FillRect(hdc, &ps.rcPaint, state->backgroundBrush);
-    DrawDialogChildBorder(state->hwnd, state->familyEdit, hdc, colors);
-    DrawDialogChildBorder(state->hwnd, state->familyList, hdc, colors);
-    DrawDialogChildBorder(state->hwnd, state->styleEdit, hdc, colors);
-    DrawDialogChildBorder(state->hwnd, state->styleList, hdc, colors);
-    DrawDialogChildBorder(state->hwnd, state->sizeEdit, hdc, colors);
-    DrawDialogChildBorder(state->hwnd, state->sizeList, hdc, colors);
     EndPaint(state->hwnd, &ps);
 }
 
@@ -561,46 +479,26 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
         return 0;
     }
     case WM_CREATE: {
-        const DialogColors colors = DialogColorsForTheme(state->dark);
-        state->backgroundBrush = CreateSolidBrush(colors.background);
-        state->controlBrush = CreateSolidBrush(colors.controlBackground);
         state->uiFont = CreateUiFontForDpi(state->dpi);
 
         state->familyLabel = CreateWindowExW(0, L"STATIC", L"Font:", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
-        state->familyEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontFamilyEditId)), nullptr, nullptr);
-        state->familyList = CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontFamilyListId)), nullptr, nullptr);
+        state->familyEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontFamilyEditId)), nullptr, nullptr);
+        state->familyList = CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontFamilyListId)), nullptr, nullptr);
 
         state->styleLabel = CreateWindowExW(0, L"STATIC", L"Font style:", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
-        state->styleEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | ES_AUTOHSCROLL | ES_READONLY, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontStyleEditId)), nullptr, nullptr);
-        state->styleList = CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontStyleListId)), nullptr, nullptr);
+        state->styleEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_BORDER | ES_AUTOHSCROLL | ES_READONLY, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontStyleEditId)), nullptr, nullptr);
+        state->styleList = CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontStyleListId)), nullptr, nullptr);
 
         state->sizeLabel = CreateWindowExW(0, L"STATIC", L"Size:", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
-        state->sizeEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontSizeEditId)), nullptr, nullptr);
-        state->sizeList = CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontSizeListId)), nullptr, nullptr);
+        state->sizeEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontSizeEditId)), nullptr, nullptr);
+        state->sizeList = CreateWindowExW(0, L"LISTBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontSizeListId)), nullptr, nullptr);
 
         state->sampleLabel = CreateWindowExW(0, L"STATIC", L"Sample", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
         state->sample = CreateWindowExW(0, L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_OWNERDRAW, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFontPreviewId)), nullptr, nullptr);
         state->ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
         state->cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
 
-        const std::array<HWND, 15> controls{
-            state->familyLabel,
-            state->familyEdit,
-            state->familyList,
-            state->styleLabel,
-            state->styleEdit,
-            state->styleList,
-            state->sizeLabel,
-            state->sizeEdit,
-            state->sizeList,
-            state->sampleLabel,
-            state->sample,
-            state->ok,
-            state->cancel,
-            nullptr,
-            nullptr,
-        };
-        for (HWND control : controls) {
+        for (HWND control : FontDialogControls(state)) {
             SetControlFont(control, state->uiFont);
         }
 
@@ -615,6 +513,14 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
     case WM_SIZE:
         LayoutFontDialog(state);
         return 0;
+    case WM_SETTINGCHANGE:
+        HandleThemeSettingChange(lParam);
+        ApplyFontDialogTheme(state);
+        return 0;
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+        ApplyFontDialogTheme(state);
+        return 0;
     case WM_PAINT:
         PaintFontDialog(state);
         return 0;
@@ -625,12 +531,12 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
             if (ReadFontDialogSelection(state, font, true)) {
                 state->selectedFont = font;
                 state->accepted = true;
-                DestroyWindow(hwnd);
+                CloseModalWindow(hwnd, state->owner, state->previousFocus);
             }
             return 0;
         }
         case IDCANCEL:
-            DestroyWindow(hwnd);
+            CloseModalWindow(hwnd, state->owner, state->previousFocus);
             return 0;
         case kFontFamilyListId:
             if (HIWORD(wParam) == LBN_SELCHANGE) {
@@ -673,14 +579,6 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
             break;
         }
         break;
-    case WM_MEASUREITEM: {
-        auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
-        if (measure != nullptr && IsFontDialogListId(measure->CtlID)) {
-            measure->itemHeight = static_cast<UINT>(ScaleForDpi(24, state != nullptr ? state->dpi : USER_DEFAULT_SCREEN_DPI));
-            return TRUE;
-        }
-        break;
-    }
     case WM_DRAWITEM: {
         auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
         if (draw == nullptr) {
@@ -690,17 +588,8 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
             DrawFontPreview(state, draw);
             return TRUE;
         }
-        if (IsFontDialogListId(draw->CtlID)) {
-            DrawFontListItem(state, draw);
-            return TRUE;
-        }
         break;
     }
-    case WM_CTLCOLOREDIT:
-    case WM_CTLCOLORLISTBOX:
-    case WM_CTLCOLORSTATIC:
-    case WM_CTLCOLORBTN:
-        return FontDialogCtlColor(state, message, wParam);
     case WM_ERASEBKGND: {
         RECT client{};
         GetClientRect(hwnd, &client);
@@ -708,7 +597,7 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
         return 1;
     }
     case WM_CLOSE:
-        DestroyWindow(hwnd);
+        CloseModalWindow(hwnd, state->owner, state->previousFocus);
         return 0;
     case WM_NCDESTROY:
         DeleteUiFont(state != nullptr ? state->uiFont : nullptr);
@@ -719,13 +608,9 @@ LRESULT CALLBACK FontDialogProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
             if (state->backgroundBrush != nullptr) {
                 DeleteObject(state->backgroundBrush);
             }
-            if (state->controlBrush != nullptr) {
-                DeleteObject(state->controlBrush);
-            }
             state->uiFont = nullptr;
             state->previewFont = nullptr;
             state->backgroundBrush = nullptr;
-            state->controlBrush = nullptr;
         }
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         return 0;
@@ -760,6 +645,7 @@ std::optional<NativePad::EditorFontSpec> ShowFontDialog(HWND owner, HINSTANCE in
 
     FontDialogState state{};
     state.owner = owner;
+    state.previousFocus = GetFocus();
     state.instance = instance;
     state.dpi = dpi;
     state.dark = dark;
@@ -792,7 +678,7 @@ std::optional<NativePad::EditorFontSpec> ShowFontDialog(HWND owner, HINSTANCE in
     MSG message{};
     while (IsWindow(dialog) && GetMessageW(&message, nullptr, 0, 0) > 0) {
         if (MessageTargetsWindow(dialog, message) && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
-            DestroyWindow(dialog);
+            CloseModalWindow(dialog, state.owner, state.previousFocus);
             continue;
         }
         if (!IsDialogMessageW(dialog, &message)) {
@@ -800,10 +686,6 @@ std::optional<NativePad::EditorFontSpec> ShowFontDialog(HWND owner, HINSTANCE in
             DispatchMessageW(&message);
         }
     }
-
-    EnableWindow(owner, TRUE);
-    SetActiveWindow(owner);
-    SetFocus(owner);
 
     if (state.accepted) {
         return state.selectedFont;

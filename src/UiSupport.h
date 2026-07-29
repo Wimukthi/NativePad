@@ -7,7 +7,7 @@
 
 // Shared Win32 UI support used by the application shell and every custom dialog:
 // DPI scaling, theme color palettes, dark-mode framing, and the small control
-// helpers that keep owner-draw dialogs visually consistent. Feature modules
+// helpers that keep NativePad-owned surfaces visually consistent. Feature modules
 // include this header and pull the helpers in with `using namespace NativePad;`.
 
 namespace NativePad {
@@ -31,8 +31,8 @@ struct ThemeColors {
     COLORREF statusText;
 };
 
-// Palette shared by the custom dialogs so borders, edit controls, owner-draw
-// toggles, and list boxes do not drift into different dark-mode shades.
+// Palette shared by custom dialog backgrounds and preview surfaces. The same
+// values are supplied to the framework for its standard-control subclasses.
 struct DialogColors {
     COLORREF background;
     COLORREF text;
@@ -57,16 +57,20 @@ void ApplyWindowIcons(HWND hwnd, HINSTANCE instance);
 
 [[nodiscard]] std::wstring GetLastErrorText(DWORD error = GetLastError());
 [[nodiscard]] bool IsSystemDarkMode();
+[[nodiscard]] bool IsHighContrastMode();
+[[nodiscard]] bool ConfigureNativeTheme(bool requestedDark, bool followSystem);
+[[nodiscard]] bool IsNativeThemeDark();
+bool HandleThemeSettingChange(LPARAM lparam);
 
 void ApplyDarkFrame(HWND hwnd, bool dark);
 void ApplyDarkControlTheme(HWND hwnd, bool dark);
-void ApplyDialogControlTheme(HWND control, bool dark);
+void ApplyThemedDialog(HWND dialog);
+void RefreshThemedDialog(HWND dialog);
+int ShowThemedMessageBox(HWND owner, std::wstring_view text, std::wstring_view caption, UINT type);
 void SetControlFont(HWND control, HFONT font);
 [[nodiscard]] std::wstring ControlText(HWND control);
 void SetControlText(HWND control, std::wstring_view text);
-void MoveBorderedControl(HWND control, int x, int y, int width, int height);
 [[nodiscard]] bool MessageTargetsWindow(HWND hwnd, const MSG& message);
-void DrawControlBorder(HDC hdc, RECT rect, COLORREF color);
-void DrawDialogChildBorder(HWND parent, HWND child, HDC hdc, const DialogColors& colors);
+void CloseModalWindow(HWND dialog, HWND owner, HWND previousFocus);
 
 } // namespace NativePad

@@ -17,14 +17,24 @@ jobs:
         configuration: [Debug, Release]
 
     steps:
-      - name: Checkout
+      - name: Checkout NativePad
         uses: actions/checkout@v6
+        with:
+          path: NativePad
+
+      - name: Checkout Wimukthi.Win32Theme
+        uses: actions/checkout@v6
+        with:
+          repository: Wimukthi/Wimukthi.Win32Theme
+          path: Wimukthi.Win32Theme
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v3
 
       - name: Build
+        working-directory: NativePad
         run: msbuild NativePad.sln /p:Configuration=${{ matrix.configuration }} /p:Platform=x64 /m
 
       - name: Test
+        working-directory: NativePad
         run: .\bin\x64\${{ matrix.configuration }}\NativePad.Tests.exe
