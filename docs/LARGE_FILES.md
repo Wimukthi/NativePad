@@ -1,126 +1,116 @@
 # Large Files
 
-NativePad has separate paths for normal editable files and oversized files.
-
-## Editable Limit
-
-`kReadChunkLimit` in `src/FileCodec.h` is currently:
+NativePad routes a file down one of two paths at open time, based only on its
+size. The threshold is `kReadChunkLimit` in `src/FileCodec.h`:
 
 ```text
 512 MB
 ```
 
-Files at or below this limit are loaded into the editable UTF-16 document model.
-Files above this limit open through the read-only mapped backend and can be
-switched into the editable large-file backend on demand (see below).
+At or below the limit the file is decoded into memory and fully editable. Above
+it the file is memory-mapped and read-only, with editing available on request.
+
+![A 588 MB log open through the read-only mapped backend](images/large-file-view.png)
 
 ## Normal Editable Path
 
-The normal open path:
+1. Open the file with Win32 file APIs.
+2. Read or map the bytes.
+3. Detect UTF-8 BOM, UTF-16 LE, UTF-16 BE, UTF-8, or ANSI fallback.
+4. Decode to UTF-16.
+5. Store the text in `DocumentBuffer`.
+6. Build a `LineIndex` for navigation and scrolling.
 
-1. Opens the file with Win32 file APIs.
-2. Reads or maps the bytes.
-3. Detects UTF-8 BOM, UTF-16 LE, UTF-16 BE, UTF-8, or ANSI fallback.
-4. Decodes the file into UTF-16.
-5. Stores text in `DocumentBuffer`.
-6. Builds `LineIndex` for navigation and scrolling.
-
-This path supports editing, undo/redo, replace, save, and print.
+This path supports everything: editing, undo/redo, replace, save, and print.
 
 ## Mapped Large-File Path
 
-The large-file path:
+1. Check the file size before any decoding.
+2. Open through `MappedTextDocument`.
+3. Map with `CreateFileMappingW` and `MapViewOfFile`.
+4. Detect BOM-based encoding.
+5. Build a line-start table by scanning the mapped bytes.
+6. Serve visible ranges to `EditorView` on demand.
 
-1. Checks file size before normal decoding.
-2. Opens the file through `MappedTextDocument`.
-3. Uses `CreateFileMappingW` and `MapViewOfFile`.
-4. Detects BOM-based encoding.
-5. Builds a line-start table by scanning mapped data.
-6. Serves visible text ranges to `EditorView` on demand.
+The OS pages file data in as it is touched. NativePad never allocates a decoded
+copy of the file, which is what keeps a multi-gigabyte log responsive.
 
-The OS pages file data in as needed. NativePad does not allocate a full decoded
-copy of the file.
+The status bar shows `READ-ONLY MAPPED` with the file size. If the mapping
+itself fails, NativePad falls back to decoding a leading chunk and shows
+`READ-ONLY PREVIEW` with the decoded and total sizes, so a partial view is never
+mistaken for the whole file.
 
-## Read-Only Behavior
+### What the read-only view allows
 
-Mapped large files open read-only so that the fast viewing path and Follow Tail
-stay efficient. To make changes, choose **Edit > Enable Large-File Editing**,
-which reopens the same file through the editable large-file backend.
+| Available | Disabled |
+| --- | --- |
+| Scroll, select, copy | Save, Save As |
+| Find, Find Next/Previous | Replace, Replace All |
+| Go To, including under Word Wrap | Typing, paste, cut, delete |
+| Select All | Print |
 
-While a large file is in the read-only mapped view, disabled commands include:
-
-- Save.
-- Save As.
-- Replace.
-- Replace All.
-- Print.
-- Typing and paste.
-- Cut and delete.
-
-Allowed commands include:
-
-- Scroll.
-- Select.
-- Copy.
-- Find.
-- Find Next/Previous.
-- Go To, including while Word Wrap is on.
+Read-only is the default because it is what makes viewing and Follow Tail fast.
+Nothing in this mode can modify or overwrite the source file.
 
 ## Editable Large-File Path
 
-`Edit > Enable Large-File Editing` reopens the current large file through
-`LargeTextDocument`, a piece table over the memory-mapped original:
+**Edit > Enable Large-File Editing** reopens the current large file through
+`LargeTextDocument`, a piece table layered over the memory-mapped original:
 
-1. The original file stays memory-mapped and read-only; it is never decoded in
-   full.
+1. The original file stays mapped and read-only; it is never decoded in full.
 2. Content is a sequence of pieces referencing either the mapped original or an
-   append-only in-memory add buffer that holds inserted text.
-3. Each source keeps a sorted newline index, and pieces carry newline counts, so
-   line/offset queries stay fast without rescanning large spans.
+   append-only in-memory add buffer holding inserted text.
+3. Each source keeps a sorted newline index, and every piece carries a newline
+   count, so line and offset queries stay fast without rescanning large spans.
 4. Editing manipulates piece descriptors only, so memory use scales with the
-   number of edits rather than the file size.
+   number of edits rather than with the file size.
 
-Saving streams the pieces in order to a staging file in the file's encoding,
-unmaps the original, atomically replaces it, and reopens from disk. This
-transiently uses extra disk space equal to the file size.
+Saving streams the pieces in order into a staging file in the document's
+encoding, unmaps the original, replaces it atomically, and reopens from disk.
+An interrupted save therefore never leaves a truncated file — but it does
+transiently need free disk space equal to the file size.
 
-Current constraints of the editable large-file path:
+The status bar shows `LARGE FILE` in this mode.
+
+### Current constraints
 
 - Printing and background crash-recovery journaling are disabled.
 - Save As writes in the document's existing encoding; the encoding picker does
   not re-encode a large file.
 - UTF-8 edits snap to code-point boundaries so multibyte characters are never
-  split, but caret navigation remains byte-based (not grapheme-aware).
-- While editing is enabled, Follow Tail reloads the whole file on change rather
-  than refreshing incrementally, so the read-only view is preferred for tailing.
+  split, but caret navigation remains byte-based rather than grapheme-aware.
+- Follow Tail reloads the whole file on change instead of refreshing
+  incrementally, so the read-only view is the better choice for tailing.
 
-## Encoding and Coordinates
+## Coordinates
 
-UTF-16 mapped files use UTF-16 code-unit offsets.
+| File | Offsets |
+| --- | --- |
+| Editable documents | UTF-16 code units |
+| Mapped UTF-16 files | UTF-16 code units |
+| Mapped UTF-8 / ANSI files | Bytes |
+| Editable large files | Bytes |
 
-UTF-8 and ANSI mapped files use byte offsets. This is intentional for current
-performance and memory use. It is exact for ASCII-heavy logs, which are the
-primary large-file target today.
+Byte offsets are a deliberate trade. They are exact for the ASCII-heavy logs
+that are the primary large-file target, and they avoid building a decoded index
+over a file that may not fit in memory. The consequences:
 
-Consequences:
-
-- Column positions in byte-backed mapped files are byte columns.
-- Non-ASCII text still renders by decoding visible ranges, but caret movement is
-  not grapheme-aware.
-- Future editable large-file work should revisit coordinate handling.
+- Reported column positions in byte-backed files are byte columns.
+- Non-ASCII text still renders correctly — visible ranges are decoded when
+  painted — but caret movement is not grapheme-aware.
 
 ## Search
 
-Mapped find scans the mapped file directly.
+Mapped find scans the mapped bytes directly rather than materializing text.
 
 - UTF-16 search compares wide characters.
 - Byte-backed search converts the needle to bytes and scans bytes.
-- Case-insensitive byte search is ASCII-oriented for speed and predictability.
+- Case-insensitive byte search is ASCII-oriented, for speed and predictability.
 
 ## Future Work
 
 - Incremental Follow Tail refresh for the editable large-file backend.
-- Async/cancellable line indexing for extremely slow storage.
-- Better Unicode-aware byte-backed navigation.
+- Async, cancellable line indexing for very slow storage.
+- Grapheme-aware navigation over byte-backed content.
 - Encoding conversion on Save As for large files.
-- Large-file performance instrumentation.
+- Instrumentation for open, index, and find latency.

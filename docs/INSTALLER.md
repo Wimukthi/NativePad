@@ -1,24 +1,22 @@
 # Installer
 
-NativePad uses Inno Setup 6 for the Windows installer.
+NativePad ships an Inno Setup 6 installer built from `installer/NativePad.iss`.
+It uses Inno's `modern dynamic` wizard style, so Setup and Uninstall follow the
+user's Windows light/dark app mode.
 
-The installer uses Inno Setup's dynamic modern wizard style, so Setup and
-Uninstall follow the user's Windows light/dark app mode.
-
-## Local Requirements
+## Requirements
 
 - Release x64 build tools from Visual Studio.
 - Inno Setup 6.
-- A `Wimukthi.Win32Theme` checkout beside NativePad, or `-ThemeRoot` pointing to
-  it.
-
-Install Inno Setup locally with:
+- A `Wimukthi.Win32Theme` checkout beside NativePad, or `-ThemeRoot` pointing at
+  one — the package includes the framework and Darkmodelib licences and the
+  complete corresponding Darkmodelib source.
 
 ```powershell
 winget install --id JRSoftware.InnoSetup --exact
 ```
 
-## Build Locally
+## Build
 
 From the repository root:
 
@@ -27,61 +25,72 @@ From the repository root:
 ```
 
 The script builds Release x64, runs the Release tests, reads the post-build
-version from `src/NativePad.rc`, and writes the installer to:
+version from `src/NativePad.rc`, and writes:
 
 ```text
 installer\output\NativePadSetup-<version>-win-x64.exe
 ```
 
-To package an already-built Release binary:
+Useful switches:
 
 ```powershell
 .\installer\build-installer.ps1 -SkipBuild -SkipTests
 ```
 
-For a non-default framework location:
-
 ```powershell
 .\installer\build-installer.ps1 -ThemeRoot D:\Libraries\Wimukthi.Win32Theme
 ```
 
-If `-Version` is supplied, it must match the current `src/NativePad.rc` version.
-This keeps the installer name and uninstall metadata aligned with the executable.
+If you pass `-Version`, it must match the current `src/NativePad.rc` version.
+That keeps the installer filename and the Windows uninstall metadata aligned
+with the executable.
 
-## Installed Files
+The script locates MSBuild and `ISCC.exe` on `PATH`, then in the usual Visual
+Studio and Inno Setup install locations, then via `vswhere`. It fails with an
+actionable message rather than guessing.
 
-The installer writes:
+## What Gets Installed
 
-- `NativePad.exe`.
-- `README.md`.
-- `LICENSE`.
-- `THIRD_PARTY_NOTICES.md`.
-- `licenses\` containing the framework and Darkmodelib licenses plus the
-  complete corresponding Darkmodelib source.
-- `docs\`.
+| Path | Contents |
+| --- | --- |
+| `NativePad.exe` | The application |
+| `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md` | Project documents |
+| `docs\` | The full documentation set |
+| `licenses\` | `Wimukthi.Win32Theme` MIT licence, Darkmodelib MPL-2.0 and MIT licences |
+| `licenses\source\darkmodelib\` | Complete corresponding Darkmodelib source, as MPL-2.0 requires |
 
-It also creates a Start Menu shortcut, offers an optional desktop shortcut, and
-registers `NativePad.exe` under Windows App Paths.
+Setup also creates a Start Menu shortcut, offers an optional desktop shortcut,
+and registers `NativePad.exe` under Windows App Paths.
 
-## Update, Reinstall, and Remove
+Installation requires administrator privileges and targets 64-bit Windows 10 or
+later.
+
+## Update, Repair, and Remove
 
 The installer keeps a stable Inno Setup `AppId`, so later packages update the
-same installation in place and reuse the previous installation directory.
+same installation in place and reuse the previous install directory.
 
-When Setup detects an existing NativePad install, it shows a maintenance choice:
+When Setup finds an existing installation it shows a maintenance page:
 
-- Update from an older installed version to the package version.
-- Repair/reinstall when the installed version matches the package version.
-- Refuse to install over a newer installed version.
-- Remove NativePad by launching the existing uninstaller.
+- **Update** an older installed version to the package version.
+- **Repair/reinstall** when the installed version matches the package version.
+- **Refuse** to install over a newer installed version.
+- **Remove** NativePad by launching the existing uninstaller.
 
-Setup uses Windows Restart Manager through `CloseApplications=yes` so in-use
-NativePad binaries can be closed before files are replaced.
+`CloseApplications=yes` puts Setup on the Windows Restart Manager, so a running
+NativePad can be closed before its files are replaced.
 
 ## File Associations
 
-The installer does not force NativePad as the `.txt` default. Windows protects
-default-app ownership, and silent default changes are not reliable or desirable.
+The installer does **not** force NativePad as the `.txt` default. Windows
+protects default-app ownership, and silently reassigning it is neither reliable
+nor desirable.
 
-Use **Help > Set as Default Editor** inside NativePad to register the per-user
-`.txt` handler and open Windows Default Apps for confirmation.
+Use **Help > Set as Default Editor** inside NativePad instead: it registers the
+per-user `.txt` handler and opens Windows Default Apps so you can confirm.
+
+## Signing
+
+Releases are currently unsigned. SmartScreen will warn on first run for both the
+installer and the portable ZIP. Keep that clearly labelled on the release page
+until code signing is in place.

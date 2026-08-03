@@ -2,167 +2,150 @@
 
 ## Requirements
 
-- Windows.
-- Visual Studio 2026 or compatible MSVC toolchain.
-- Windows 10 SDK or newer.
-- x64 target platform.
-- A `Wimukthi.Win32Theme` checkout beside NativePad. The default layout is
-  `Software\Wimukthi.Win32Theme` and `Software\NativePad`.
+| Requirement | Notes |
+| --- | --- |
+| Windows | 64-bit, Windows 10 or later |
+| Visual Studio 2026 | Or any MSVC toolchain providing the `v145` toolset |
+| Windows 10 SDK | Or newer |
+| `Wimukthi.Win32Theme` | A checkout beside NativePad — see below |
 
-The solution uses:
+The solution builds x64 only, with C++20, the Unicode character set, warnings
+at level 4 treated as errors, and per-monitor v2 DPI awareness requested by
+`src/app.manifest`.
 
-- C++20.
-- MSVC toolset `v145`.
-- Warnings as errors.
-- Unicode character set.
-- Per-monitor v2 DPI awareness through `src/app.manifest`.
+### Framework layout
 
-## Build From Developer PowerShell
+`NativePad.vcxproj` imports `Wimukthi.Win32Theme.props`, which contributes the
+shared theme facade, the pinned Darkmodelib sources, include paths, preprocessor
+definitions, and Windows libraries. The default layout is:
 
-Building the NativePad app project automatically increments the fourth version
-component in `src\NativePad.rc`. Use `/p:AutoIncrementVersion=false` only for a
-diagnostic build where the source version must not change.
-
-Debug:
-
-```powershell
-MSBuild.exe .\NativePad.sln /p:Configuration=Debug /p:Platform=x64 /m
+```text
+Software\
+  NativePad\
+  Wimukthi.Win32Theme\
 ```
 
-Release:
+If the framework is missing the build fails early with a clear message. Pass
+`/p:WimukthiWin32ThemeRoot=<path>` to use a different checkout. The test project
+does not depend on the theme framework.
+
+## Build
+
+From a Visual Studio Developer PowerShell, at the repository root:
 
 ```powershell
 MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
 
-For a different framework location, pass:
+```powershell
+MSBuild.exe .\NativePad.sln /p:Configuration=Debug /p:Platform=x64 /m
+```
+
+With a framework checkout elsewhere:
 
 ```powershell
 MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /p:WimukthiWin32ThemeRoot=D:\Libraries\Wimukthi.Win32Theme /m
 ```
 
-`NativePad.vcxproj` imports `Wimukthi.Win32Theme.props`, which adds the shared
-facade, pinned Darkmodelib sources, include paths, definitions, and Windows
-libraries. The test project remains independent of UI theming.
-
-If `MSBuild.exe` is not on PATH, use the installed Visual Studio path, for
-example:
+If `MSBuild.exe` is not on `PATH`, call it by full path:
 
 ```powershell
 & "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
 
-## Outputs
+> **Every app build bumps the version.** Building `NativePad.vcxproj` increments
+> the fourth version component in `src\NativePad.rc`, so a successful local
+> build leaves a change in your working tree. Add
+> `/p:AutoIncrementVersion=false` for a diagnostic build that must not touch the
+> version. See [Versioning](VERSIONING.md).
 
-Debug app:
-
-```text
-bin\x64\Debug\NativePad.exe
-```
-
-Release app:
+### Outputs
 
 ```text
 bin\x64\Release\NativePad.exe
-```
-
-Debug tests:
-
-```text
+bin\x64\Release\NativePad.Tests.exe
+bin\x64\Debug\NativePad.exe
 bin\x64\Debug\NativePad.Tests.exe
 ```
 
-Release tests:
+Intermediates land in `obj\`. Both directories, along with the Visual Studio
+`.vs\` cache, are build artifacts — they are ignored by Git and safe to delete.
 
-```text
-bin\x64\Release\NativePad.Tests.exe
-```
+## Test
 
-## Run Tests
-
-Debug:
-
-```powershell
-.\bin\x64\Debug\NativePad.Tests.exe
-```
-
-Release:
+The test runner is a single console executable with no test-framework
+dependency, so it builds on a clean Windows machine with nothing extra
+installed.
 
 ```powershell
 .\bin\x64\Release\NativePad.Tests.exe
 ```
 
-Expected output:
+Expected output, exit code `0`:
 
 ```text
 DocumentBuffer tests passed
 LineIndex tests passed
 MappedTextDocument tests passed
+LargeTextDocument tests passed
+RecoveryJournal tests passed
 TextFormat tests passed
 ```
 
+Any failure prints the failing assertion to stderr and aborts with a non-zero
+exit code.
+
+### What is covered
+
+| Suite | Coverage |
+| --- | --- |
+| `DocumentBuffer` | Piece-table insert, erase, replace, range reads, line counts, and find across piece boundaries |
+| `LineIndex` | Incremental line-start updates after edits, without full rebuilds |
+| `MappedTextDocument` | UTF-8/byte-backed and UTF-16 line starts, range decoding, find, and refresh — appended content extends the index across the old mapping boundary, in-place rewrites report as replaced |
+| `LargeTextDocument` | Piece-table-over-mmap insert/erase/find across UTF-8 and UTF-16 originals, erase snapping to UTF-8 code-point boundaries, line/offset queries, and save round-trips that preserve a BOM |
+| `RecoveryJournal` | Journals from dead processes are claimed with exact text and metadata, journals from live processes are left alone, and clearing removes every journal file |
+| `TextFormat` | Encoding labels, line-ending detection and normalization, and save-encoding byte output |
+
+### What still needs a human
+
+The UI layer has no automated coverage. Verify manually after UI changes:
+
+- Window and dialog painting in dark, light, and Windows High Contrast.
+- DPI changes, including dragging across monitors at different scales.
+- Print output.
+- Common file dialogs and drag-and-drop open.
+- Very large real-world files.
+- Follow Tail against a live log writer, and the reload-on-activation prompt.
+
+[Release Checklist](RELEASE_CHECKLIST.md) is the full manual pass.
+
 ## Continuous Integration
 
-GitHub Actions builds and tests both Debug x64 and Release x64 on Windows. The
-workflow lives at `.github/workflows/ci.yml`.
+`.github/workflows/ci.yml` builds and tests Debug x64 and Release x64 on every
+push and pull request against `main`. It checks out `Wimukthi.Win32Theme`
+alongside NativePad so the framework import resolves the same way it does
+locally.
 
-The CI job currently targets `windows-2025-vs2026` because the project uses the
-Visual Studio 2026/MSVC `v145` toolset. If the hosted runner labels change, keep
-this file and the workflow aligned with the toolset declared in the solution.
+The job runs on `windows-2025-vs2026` because the project needs the Visual
+Studio 2026 `v145` toolset. If the hosted runner labels change, keep the
+workflow and the toolset declared in the projects aligned.
 
 ## Release Packaging
 
-The manual `Release Package` workflow lives at
-`.github/workflows/release-package.yml`. It builds Release x64, runs the Release
-test binary, creates `NativePad-<version>-win-x64.zip`, builds the Inno Setup
-installer `NativePadSetup-<version>-win-x64.exe`, and uploads both files as
-workflow artifacts.
+`.github/workflows/release-package.yml` is a manual (`workflow_dispatch`)
+workflow. It builds Release x64, runs the Release tests, produces
+`NativePad-<version>-win-x64.zip`, builds the Inno Setup installer
+`NativePadSetup-<version>-win-x64.exe`, and uploads both as workflow artifacts.
 
-The packaging build runs with `AutoIncrementVersion=false`, so the released
-version equals the value already committed in `src/NativePad.rc`. Run it from
-GitHub Actions with that committed version as the input. Before publishing the
-artifact, complete [Release Checklist](RELEASE_CHECKLIST.md).
+It builds with `AutoIncrementVersion=false`, so the released version is exactly
+the value already committed in `src/NativePad.rc` — supply that version as the
+workflow input, and the job fails if the built binary disagrees.
 
-The installer can also be built locally with:
+To build the installer locally instead:
 
 ```powershell
 .\installer\build-installer.ps1
 ```
 
-See [Installer](INSTALLER.md) for installer scope and file-association behavior.
-
-## Test Coverage
-
-Current tests cover:
-
-- Piece-table insert, erase, replace, range, and line count behavior.
-- Incremental line-index updates.
-- Mapped UTF-8/byte-backed line starts, range decoding, and find.
-- Mapped UTF-16 line starts, range decoding, and find.
-- Mapped-document refresh: appended content extends the line index across the
-  old mapping boundary, and in-place rewrites report as replaced.
-- Recovery journal round trips: journals from dead processes are claimed with
-  exact text/metadata, journals from live processes are left alone, and
-  clearing removes all journal files.
-- Encoding labels, line-ending detection/normalization, and save encoding bytes.
-
-Manual testing is still needed for:
-
-- Window/dialog painting.
-- DPI changes across monitors.
-- Dark/light mode.
-- Windows High Contrast.
-- Print output.
-- File dialogs and drag/drop open.
-- Very large real-world files.
-- Follow Tail against a live log writer, and the reload-on-activation prompt.
-
-## Clean Build Notes
-
-Generated output lives under:
-
-- `bin\`
-- `obj\`
-- `.vs\`
-
-Those folders are build artifacts and should not be treated as source.
+See [Installer](INSTALLER.md) for what the package contains, and
+[Release Checklist](RELEASE_CHECKLIST.md) before publishing anything.

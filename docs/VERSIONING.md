@@ -1,66 +1,77 @@
 # Versioning
 
-NativePad uses a four-part version number:
+NativePad uses a four-part Windows version number:
 
 ```text
 major.minor.patch.build
 ```
 
-The initial release baseline was `1.0.0.0`. The current source version is the
-value in `src/NativePad.rc`.
+The baseline was `1.0.0.0`. The current version always lives in
+`src/NativePad.rc`.
 
 ## Increment Rules
 
-- Increment `major` for compatibility-breaking behavior, major architecture
-  changes, or a release that intentionally changes the product contract.
-- Increment `minor` for user-visible feature additions that preserve existing
-  behavior.
-- Increment `patch` for bug fixes, polish, reliability work, and performance
-  improvements that do not add a new user-facing feature.
-- Increment `build` for every build. MSBuild does this automatically for the
-  NativePad application project.
+| Component | Increment for |
+| --- | --- |
+| `major` | Compatibility-breaking behavior, major architecture changes, or an intentional change to the product contract |
+| `minor` | User-visible feature additions that preserve existing behavior |
+| `patch` | Bug fixes, polish, reliability, and performance work with no new user-facing feature |
+| `build` | Every build — MSBuild does this automatically |
 
-When a parent component changes, reset the components to its right. For example:
+Reset everything to the right of the component you increment:
 
-- `1.0.0.14` -> `1.0.1.0` for a patch release.
-- `1.0.1.8` -> `1.1.0.0` for a minor feature release.
-- `1.9.4.3` -> `2.0.0.0` for a major release.
+```text
+1.0.0.14  ->  1.0.1.0   patch release
+1.0.1.8   ->  1.1.0.0   minor feature release
+1.9.4.3   ->  2.0.0.0   major release
+```
 
-## Source Of Truth
+## Source of Truth
 
-The executable resource in `src/NativePad.rc` is the version source of truth.
-The About dialog reads the file version from that resource at runtime so the UI
-and Windows file properties remain aligned.
+The executable resource in `src/NativePad.rc` is authoritative. Four fields
+must always agree: `FILEVERSION`, `PRODUCTVERSION`, `FileVersion`, and
+`ProductVersion`.
+
+The About dialog reads the file version from the running executable at runtime,
+so the UI and the Windows file properties can never drift apart.
 
 ## Automatic Build Increment
 
-`NativePad.vcxproj` runs `tools\Update-NativePadVersion.ps1` before the app
-project builds. The script increments only the fourth component and updates all
-resource fields together:
+Before `NativePad.vcxproj` builds, MSBuild runs
+`tools\Update-NativePadVersion.ps1`, which increments the fourth component and
+rewrites all four resource fields in a single pass — so MSBuild never sees
+partially updated version metadata.
 
-- `FILEVERSION`.
-- `PRODUCTVERSION`.
-- `FileVersion`.
-- `ProductVersion`.
+This intentionally modifies `src/NativePad.rc`, so **a successful local build
+leaves a version change in your working tree.** The script refuses to write if
+the four fields disagree, if a component would exceed 65535, or if the
+replacement produced no change.
 
-This intentionally modifies `src/NativePad.rc`, so a successful local build will
-leave a version change in the working tree.
-
-To run a diagnostic build without changing the version:
+For a diagnostic build that must not touch the version:
 
 ```powershell
 MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /p:AutoIncrementVersion=false /m
 ```
 
-Before producing a packaged release build:
+To print the current version without changing anything:
 
-1. Manually update `major`, `minor`, or `patch` in `src/NativePad.rc` if the
-   release requires it, resetting the components to the right.
-2. Build Release x64 and let MSBuild increment the `build` component.
+```powershell
+.\tools\Update-NativePadVersion.ps1 -PrintVersion
+```
+
+## Releasing a Version
+
+1. Manually set `major`, `minor`, or `patch` in `src/NativePad.rc` if the
+   release warrants it, resetting the components to its right.
+2. Build Release x64 and let MSBuild increment `build`.
 3. Run the test suite.
-4. Confirm the About dialog displays the expected version and build timestamp.
+4. Confirm the About dialog shows the expected version and build timestamp.
+5. Commit the resulting `src/NativePad.rc`.
+6. Run the `Release Package` workflow with that exact version as its input.
 
-The `Release Package` workflow builds with `AutoIncrementVersion=false`, so the
-released version is exactly the value committed in `src/NativePad.rc`. It asks
-for that version as input and fails if the built executable version does not
-match.
+The packaging workflow builds with `AutoIncrementVersion=false`, so the released
+version is exactly what was committed. It fails if the built executable's
+version does not match the input you supplied.
+
+Record the release in [CHANGELOG.md](../CHANGELOG.md) and follow
+[Release Checklist](RELEASE_CHECKLIST.md) before publishing.

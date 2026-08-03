@@ -1,200 +1,177 @@
 # Architecture
 
-NativePad is a single-process C++20 Win32 application. It avoids a general
-widget framework so startup, native widgets, custom painting, and large-file
-behavior remain explicit. `Wimukthi.Win32Theme` supplies the reusable
-Windows-integration layer for dark mode and High Contrast.
+NativePad is a single-process C++20 Win32 application. It deliberately avoids a
+widget framework so startup cost, native control behavior, custom painting, and
+large-file handling all stay explicit and inspectable.
 
-## Main Components
+The one external component is
+[`Wimukthi.Win32Theme`](https://github.com/Wimukthi/Wimukthi.Win32Theme), a
+sibling repository that supplies the reusable Windows dark-mode and High
+Contrast integration layer.
 
-| Component | Files | Responsibility |
+## Module Map
+
+| Module | Files | Responsibility |
 | --- | --- | --- |
-| Application shell | `src/main.cpp` | `AppWindow` main window: menu strip, status bar, command routing, document/dirty state, preference load/save |
-| Shared UI support | `src/UiSupport.h`, `src/UiSupport.cpp` | NativePad palettes and DPI/control helpers; delegates Windows theme integration to `Wimukthi.Win32Theme` |
-| Windows theme framework | sibling `Wimukthi.Win32Theme` repository | Process/window dark-mode opt-in, native control theming, system-theme changes, Windows-version handling, and High Contrast fallback |
-| Popup menus | `src/PopupMenu.h`, `src/PopupMenu.cpp` | Owner-drawn dark menu and context-menu windows plus the drop shadow |
-| File codec | `src/FileCodec.h`, `src/FileCodec.cpp` | Encoding detection, file read/write, large-file preview, and open/save pickers |
-| Printing | `src/Printing.h`, `src/Printing.cpp` | Threaded pagination/spooling worker |
-| Dialogs | `src/FontDialog.*`, `src/FindReplaceDialog.*`, `src/GoToDialog.*`, `src/AboutDialog.*`, `src/MessageDialog.*` | Custom dark-mode modal/modeless dialogs, including NativePad-owned message prompts |
-| Settings | `src/Settings.h`, `src/Settings.cpp` | INI preference read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini`, with one-time migration from legacy registry values |
-| Default editor | `src/DefaultEditor.h`, `src/DefaultEditor.cpp` | Per-user file-association registration for `.txt` and the Windows "Default apps" hand-off |
-| Update checker | `src/UpdateChecker.h`, `src/UpdateChecker.cpp` | GitHub release discovery, installer download, SHA-256 verification, and update-check preferences |
-| Crash recovery | `src/RecoveryJournal.h`, `src/RecoveryJournal.cpp` | Journaling of unsaved editable documents and restore of journals abandoned by a crashed process |
-| Editor control | `src/EditorView.h`, `src/EditorView.cpp` | DirectWrite rendering, caret/selection, scrolling, input, clipboard, undo/redo |
-| Editable document | `src/DocumentBuffer.h`, `src/DocumentBuffer.cpp` | Piece-table storage for normal editable files |
-| Line index | `src/LineIndex.h`, `src/LineIndex.cpp` | Logical line starts for editable documents |
-| Large-file document (read-only) | `src/MappedTextDocument.h`, `src/MappedTextDocument.cpp` | Read-only memory-mapped text access and line/search indexing |
-| Large-file document (editable) | `src/LargeTextDocument.h`, `src/LargeTextDocument.cpp` | Piece table over the memory-mapped original plus an in-memory add buffer; editable without decoding the whole file |
-| Text format helpers | `src/TextFormat.h`, `src/TextFormat.cpp` | Encoding labels, line-ending detection, normalization, and save encoding |
-| Resources/manifest | `src/NativePad.rc`, `src/resource.h`, `src/app.manifest` | Version metadata, command IDs, visual styles, DPI awareness |
-| Tests | `tests/*.cpp` | Dependency-free executable tests |
+| Application shell | `main.cpp` | `AppWindow`: menu strip, status bar, command routing, document and dirty state, preference load/save |
+| Editor control | `EditorView.*` | DirectWrite rendering, caret and selection, scrolling, input, clipboard, undo/redo |
+| Editable document | `DocumentBuffer.*` | Piece table over decoded UTF-16 text |
+| Line index | `LineIndex.*` | Logical line starts for editable documents, updated incrementally |
+| Mapped document | `MappedTextDocument.*` | Read-only memory-mapped text access, line indexing, and find |
+| Editable large document | `LargeTextDocument.*` | Piece table over the memory-mapped original plus an in-memory add buffer |
+| File codec | `FileCodec.*` | Encoding detection, read/write, large-file preview, open/save pickers |
+| Text format helpers | `TextFormat.*` | Encoding labels, line-ending detection and normalization, save encoding |
+| Shared UI support | `UiSupport.*` | NativePad palettes, DPI scaling, owner-draw helpers |
+| Popup menus | `PopupMenu.*` | Owner-drawn menu and context-menu windows, plus the drop shadow |
+| Dialogs | `FontDialog.*`, `FindReplaceDialog.*`, `GoToDialog.*`, `AboutDialog.*`, `MessageDialog.*` | Custom theme-aware modal and modeless dialogs |
+| Printing | `Printing.*` | Pagination and spooling worker |
+| Settings | `Settings.*` | INI read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini` |
+| Crash recovery | `RecoveryJournal.*` | Journaling of unsaved documents and recovery of journals abandoned by a crashed process |
+| Update checker | `UpdateChecker.*` | GitHub release discovery, installer download, SHA-256 verification |
+| Default editor | `DefaultEditor.*` | Per-user `.txt` association and the Windows Default Apps hand-off |
+| Resources | `NativePad.rc`, `resource.h`, `app.manifest` | Version metadata, command IDs, visual styles, DPI awareness |
+| Theme framework | sibling `Wimukthi.Win32Theme` | Process and per-window dark mode, native control theming, system-theme changes, High Contrast fallback |
+| Tests | `tests/*.cpp` | Dependency-free console test runner |
 
-The application shell is split into focused translation units rather than one
-large `main.cpp`. Each dialog and feature area lives in its own file and exposes
-a minimal header (for example, `ShowFontDialog`, `ShowGoToLineDialog`,
-`StartPrintWorker`). Cross-cutting application helpers such as DPI scaling,
-palette selection, and control styling are shared through `UiSupport`; generic
-Windows theming is delegated to `Wimukthi.Win32Theme`. `main.cpp` retains only
-`AppWindow`, `wWinMain`, and shell-only helpers.
+All paths are relative to `src/` unless noted.
 
-## UI Ownership
+Each dialog and feature area is its own translation unit exposing a minimal
+header — `ShowFontDialog`, `ShowGoToLineDialog`, `StartPrintWorker`, and so on.
+`main.cpp` keeps only `AppWindow`, `wWinMain`, and shell-level helpers.
+Cross-cutting helpers (DPI scaling, palette selection, control styling) belong
+in `UiSupport`; generic Windows theming belongs in `Wimukthi.Win32Theme`.
 
-`AppWindow` in `main.cpp` owns:
+## Ownership
 
-- Top-level HWND lifetime.
-- Custom menu strip and popup menus.
-- Status bar.
-- Dialog creation.
-- File/open/save/print commands.
-- Dirty state and document metadata.
-- Preference load/save under `%LOCALAPPDATA%\NativePad\NativePad.ini`.
+`AppWindow` owns the top-level HWND, the custom menu strip and popup menus, the
+status bar, dialog creation, file and print commands, document metadata and
+dirty state, and preference persistence.
 
-`EditorView` owns:
+`EditorView` owns the child editor HWND, its Direct2D and DirectWrite
+resources, the caret blink timer, selection and scroll state, word wrap state,
+visual-only options such as line numbers, and the undo/redo stacks.
 
-- The child editor HWND.
-- Direct2D/DirectWrite resources.
-- Caret blink timer, selection, scroll state, and word wrap state.
-- Visual-only editor options such as line numbers.
-- Undo/redo stacks for editable documents.
-- Backend-neutral text access through helper methods.
-
-The split keeps Win32 command handling out of the editor while keeping editor
-painting and navigation out of the app shell.
+The split keeps Win32 command handling out of the editor and editor painting
+out of the shell.
 
 ## Document Backends
 
-Normal files are decoded into UTF-16 and stored in `DocumentBuffer`. This path is
-editable and supports undo/redo, replace, save, print, and normal find.
+`EditorView` can point at exactly one of three backends:
 
-Open records the detected encoding and line-ending policy. Save preserves that
-encoding where possible and normalizes CRLF/LF/CR-only files back to their
-detected line ending. Mixed-line files are left mixed.
+| Field | Backend | Coordinates | Editable |
+| --- | --- | --- | --- |
+| `document_` | `DocumentBuffer` | UTF-16 code units | Yes |
+| `mappedDocument_` | `MappedTextDocument` | UTF-16 code units, or bytes for UTF-8/ANSI | No |
+| `largeDocument_` | `LargeTextDocument` | Bytes | Yes |
 
-Large files above `kReadChunkLimit` open through `MappedTextDocument`. That
-backend is read-only. It maps the file, builds a line-start table, and serves
-visible ranges on demand. Choosing **Edit > Enable Large-File Editing** reopens
-the file through `LargeTextDocument`, an editable piece table over the mapped
-original (see [Large Files](LARGE_FILES.md)); the read-only view stays the
-default so the fast viewing and Follow Tail paths are unaffected.
+Ordinary files are decoded into UTF-16 and stored in `DocumentBuffer`, which
+supports editing, undo/redo, replace, save, and print. The open path records
+the detected encoding and line-ending policy so save can preserve both.
 
-`EditorView` can point at one of three backends:
+Files above `kReadChunkLimit` (512 MB, in `FileCodec.h`) open through
+`MappedTextDocument`, which maps the file, builds a line-start table, and serves
+visible ranges on demand. **Edit > Enable Large-File Editing** reopens the same
+file through `LargeTextDocument`; the read-only view stays the default so the
+fast viewing and Follow Tail paths are unaffected. See
+[Large Files](LARGE_FILES.md).
 
-- `DocumentBuffer* document_` (editable UTF-16 buffer)
-- `MappedTextDocument* mappedDocument_` (read-only large file)
-- `LargeTextDocument* largeDocument_` (editable large file)
+Because backends differ in coordinate units, every edit funnels through
+`EditorView::BackendReplace`, which records undo/redo in the backend's own units
+rather than assuming UTF-16. Paint, hit-test, caret, selection, and scroll code
+goes through backend-neutral helpers such as `DocumentLength`,
+`DocumentTextRange`, `IndexedLineCount`, and `IndexedMaxLineLength`.
 
-The editable UTF-16 buffer and byte-backed large document differ in coordinate
-units, so all editing funnels through `EditorView::BackendReplace`, which
-records undo/redo in document units rather than assuming UTF-16 code units.
-
-All paint, hit-test, caret, selection, and scroll code goes through helper
-methods such as `DocumentLength`, `DocumentTextRange`, `IndexedLineCount`, and
-`IndexedMaxLineLength`.
-
-## Text Coordinates
-
-Editable documents and UTF-16 mapped files use UTF-16 code-unit offsets.
-
-Byte-backed mapped files use byte offsets. This keeps large ASCII/log files
-fast and memory-efficient. Visible ranges are decoded when painted.
-
-This matters for future features:
-
-- Selection/caret positions in mapped UTF-8/ANSI files are byte positions.
-- Exact Unicode grapheme navigation is not implemented.
-- Editable large-file support will need a more complete storage model.
+Byte coordinates are deliberate: they keep large ASCII logs fast and
+memory-efficient, at the cost of caret navigation that is not grapheme-aware.
+UTF-8 edits do snap to code-point boundaries, so multibyte characters are never
+split.
 
 ## Rendering
 
-The editor uses Direct2D for the render target and DirectWrite for text metrics
-and drawing. It renders only visible rows.
+The editor draws into a Direct2D render target and measures text with
+DirectWrite, painting only the visible rows.
 
-The caret is custom-drawn and blinked with a timer using the system caret blink
-interval, because the editor does not use the native Win32 caret APIs.
+The caret is custom-drawn and blinked on a timer using the system caret blink
+interval, because the editor does not use the Win32 caret APIs.
 
-Line numbers are drawn as an editor gutter. They are not part of document text,
-so save, copy, search, replace, and print paths never see them. With word wrap
-enabled, only logical line starts receive a number; wrapped continuation rows
-stay blank in the gutter.
+Line numbers are an editor gutter, not document text, so save, copy, search,
+replace, and print never see them. With word wrap on, only logical line starts
+are numbered; wrapped continuation rows stay blank.
 
-Word wrap uses a lazy visual-row prefix cache:
-
-- Logical lines come from `LineIndex` or `MappedTextDocument`.
-- Visual row counts depend on wrap width and font metrics.
-- Changing font, DPI, window width, or word-wrap state invalidates the cache.
+Word wrap uses a lazy visual-row prefix cache. Logical lines come from
+`LineIndex` or `MappedTextDocument`; visual row counts depend on wrap width and
+font metrics, so the cache is invalidated when the font, DPI, window width, or
+word-wrap state changes.
 
 ## Threading
 
-Most application work stays on the UI thread. Printing and update checks are the
-current exceptions:
+Nearly all work stays on the UI thread. There are two exceptions:
 
-- The native Print dialog runs on the UI thread.
-- After the printer DC is returned, pagination/spooling runs on a worker thread.
-- Completion is posted back with `WM_NATIVEPAD_PRINT_COMPLETE`.
-- Update checks and installer downloads run on worker threads through WinHTTP.
-- Update completion is posted back with `WM_NATIVEPAD_UPDATE_CHECK_COMPLETE` and
+- **Printing.** The native Print dialog runs on the UI thread; once the printer
+  DC is returned, pagination and spooling move to a worker thread. Completion
+  posts `WM_NATIVEPAD_PRINT_COMPLETE`.
+- **Updates.** Update checks and installer downloads run on worker threads
+  through WinHTTP, posting `WM_NATIVEPAD_UPDATE_CHECK_COMPLETE` and
   `WM_NATIVEPAD_UPDATE_DOWNLOAD_COMPLETE`.
 
-Do not access HWND-owned UI state from worker threads.
+Worker threads must never touch HWND-owned UI state.
 
-## External File Changes and Follow Tail
+## External Changes and Follow Tail
 
-`AppWindow` records a file stamp (size plus last write time) whenever a
+`AppWindow` records a file stamp — size plus last write time — whenever a
 document is opened or saved. On window activation it re-queries the stamp and
-offers to reload when the file changed on disk, with an explicit warning when
-unsaved edits would be lost. Declining records the new stamp so the same change
-does not re-prompt on every activation.
+offers to reload if the file changed, warning explicitly when unsaved edits
+would be lost. Declining records the new stamp so the same change does not
+re-prompt on every activation.
 
-View > Follow Tail (F6) polls the open file on a one-second UI timer:
+**View > Follow Tail** (`F6`) polls the file on a one-second UI timer:
 
 - Mapped large files refresh in place. `MappedTextDocument::Refresh` remaps the
   grown file and extends the line index from the previous end of content, so a
-  multi-gigabyte log never gets rescanned. Shrinks and same-size rewrites are
-  reported as `Replaced` and trigger a full reload; log rotation by
-  delete-and-rename is caught by comparing the path stamp because the mapped
-  handle keeps following the original file.
-- Editable files reload from disk when the stamp changes and the editor is kept
+  multi-gigabyte log is never rescanned. Shrinks and same-size rewrites report
+  as `Replaced` and trigger a full reload. Log rotation by delete-and-rename is
+  caught by comparing the path stamp, because the mapped handle keeps following
+  the original file.
+- Editable files reload from disk when the stamp changes, and the editor is held
   read-only while following so edits cannot race the external writer.
 
-After each refresh the caret moves to the document end so the newest content
-stays visible. Follow Tail is per-file state: it stops when a different file is
-opened or the document is reset to Untitled. Note that while a mapped document
-holds its file mapping, external writers can append but cannot truncate the
-file (Windows fails the truncation with `ERROR_USER_MAPPED_FILE`).
+After each refresh the caret moves to the end of the document. Follow Tail is
+per-file state and stops when another file is opened or the document is reset.
+
+Note that while a mapping is held, external writers can append to the file but
+cannot truncate it — Windows fails the truncation with
+`ERROR_USER_MAPPED_FILE`.
 
 ## Crash Recovery
 
-`RecoveryJournal` (`src/RecoveryJournal.h/.cpp`) protects unsaved work in
-editable documents. While a document is dirty, the shell journals a snapshot to
-`%LOCALAPPDATA%\NativePad\Recovery` on a debounced timer (at most once per
-three-second window). The journal is a pair of files named by the owning
-process id: a UTF-16 LE content file, staged and renamed so it is never
-half-written, and a metadata file (original path, encoding, line ending)
-written last so a journal is only discoverable once complete.
+While an editable document is dirty, the shell journals a snapshot to
+`%LOCALAPPDATA%\NativePad\Recovery` on a debounced timer, at most once every
+three seconds. A journal is a pair of files named after the owning process id:
+a UTF-16 LE content file, staged and renamed so it is never half-written, and a
+metadata file (original path, encoding, line ending) written last so a journal
+only becomes discoverable once it is complete.
 
 The journal is deleted whenever the document reaches a clean or intentionally
-discarded state: successful save, opening another file, File > New, and normal
-exit. If the journal survives, the process crashed.
+discarded state — a successful save, opening another file, **File > New**, or a
+normal exit. A journal that survives therefore means the process crashed.
 
 On startup the shell scans the recovery directory for journals whose owning
-process is no longer running, claims one (removing it from disk), and offers to
+process is no longer running, claims one by removing it from disk, and offers to
 restore it. A restored document is re-journaled immediately so it survives a
-second crash. Mapped and read-only preview documents are never journaled
-because they cannot hold unsaved edits.
+second crash. Mapped and read-only preview documents are never journaled.
 
 ## Update Flow
 
-The update checker reads the latest GitHub release, compares the release tag to
-the executable file version, finds the `NativePadSetup-*-win-x64.exe` asset, and
-downloads it to `%LOCALAPPDATA%\NativePad\Updates`.
+The update checker reads the latest GitHub release, compares the release tag
+against the executable's file version, locates the
+`NativePadSetup-*-win-x64.exe` asset, and downloads it to
+`%LOCALAPPDATA%\NativePad\Updates`. Downloads are verified against the release
+asset's SHA-256 digest when GitHub publishes one.
 
-Downloaded installers are verified against the GitHub release asset SHA-256
-digest when the digest is present. The UI thread owns all prompts and launches
-the installer elevated with `ShellExecuteW("runas")` only after dirty document
-state has been handled.
+The UI thread owns every prompt and launches the installer elevated with
+`ShellExecuteW("runas")` only after dirty-document state has been handled.
 
-Automatic checks are off by default and are controlled by the `CheckForUpdates`
-setting in `%LOCALAPPDATA%\NativePad\NativePad.ini`. When enabled, startup
-checks are rate-limited by `LastUpdateCheckUtc`. The feed endpoint is also
-stored in the INI as `UpdateUrl` and defaults to
+Automatic checks are off by default, controlled by `CheckForUpdates` and
+rate-limited by `LastUpdateCheckUtc`. The feed endpoint is `UpdateUrl`, which
+defaults to
 `https://api.github.com/repos/Wimukthi/NativePad/releases/latest`.

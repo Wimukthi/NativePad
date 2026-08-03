@@ -63,6 +63,7 @@ Source: "{#SourceRoot}\bin\{#Platform}\{#Configuration}\NativePad.exe"; DestDir:
 Source: "{#SourceRoot}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceRoot}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ThemeRoot}\LICENSE"; DestDir: "{app}\licenses"; DestName: "Wimukthi.Win32Theme-MIT.txt"; Flags: ignoreversion
 Source: "{#ThemeRoot}\third_party\darkmodelib\LICENSE.md"; DestDir: "{app}\licenses"; DestName: "Darkmodelib-MPL-2.0.txt"; Flags: ignoreversion
 Source: "{#ThemeRoot}\third_party\darkmodelib\LICENSE-MIT.md"; DestDir: "{app}\licenses"; DestName: "Darkmodelib-MIT.txt"; Flags: ignoreversion

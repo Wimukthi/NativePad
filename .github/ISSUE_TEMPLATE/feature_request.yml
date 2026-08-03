@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest something NativePad should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        NativePad targets classic Windows Notepad, plus large-file handling and
+        modern Windows integration. Requests that would turn it into a general
+        code editor are usually declined — see
+        [Classic Notepad Parity](https://github.com/Wimukthi/NativePad/blob/main/docs/CLASSIC_NOTEPAD_PARITY.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Describe the situation you are in, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like NativePad to do
+    validations:
+      required: true
+
+  - type: dropdown
+    id: precedent
+    attributes:
+      label: Does an existing Notepad do this?
+      options:
+        - Classic Windows Notepad does this
+        - Modern (Store) Notepad does this
+        - Neither — this would be new
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

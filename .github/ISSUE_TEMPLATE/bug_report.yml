@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in NativePad does not work the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here — see
+        [SECURITY.md](https://github.com/Wimukthi/NativePad/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: NativePad version
+      description: From Help > About.
+      placeholder: 1.1.0.3
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver`, or Settings > System > About.
+      placeholder: Windows 11 Pro 24H2 (26100.2314)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Choose ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: file-details
+    attributes:
+      label: File involved
+      description: >
+        If a specific file triggers this, its size and encoding usually matter.
+        Include them, and attach the file if you can share it.
+      placeholder: 2.4 GB, UTF-8 without BOM, LF line endings
+
+  - type: checkboxes
+    id: context
+    attributes:
+      label: Anything relevant here?
+      options:
+        - label: Dark mode was active
+        - label: Windows High Contrast was active
+        - label: Display scaling is not 100%, or multiple monitors at different scales
+        - label: The file was open through the large-file (read-only or editable) path
+        - label: Follow Tail was active
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, crash details, or notes that did not fit above.

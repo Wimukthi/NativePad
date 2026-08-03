@@ -64,6 +64,7 @@ jobs:
           Copy-Item -LiteralPath ".\README.md" -Destination $stage
           Copy-Item -LiteralPath ".\LICENSE" -Destination $stage
           Copy-Item -LiteralPath ".\THIRD_PARTY_NOTICES.md" -Destination $stage
+          Copy-Item -LiteralPath ".\CHANGELOG.md" -Destination $stage
           Copy-Item -LiteralPath ".\docs" -Destination (Join-Path $stage "docs") -Recurse
           $licenses = New-Item -ItemType Directory -Path (Join-Path $stage "licenses") -Force
           Copy-Item -LiteralPath "..\Wimukthi.Win32Theme\LICENSE" -Destination (Join-Path $licenses "Wimukthi.Win32Theme-MIT.txt")

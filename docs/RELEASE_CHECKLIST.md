@@ -1,189 +1,178 @@
 # Release Checklist
 
-Use this checklist before publishing a NativePad build. It is intentionally
-manual-heavy because the highest-risk areas are Win32 UI behavior, common
-dialogs, printing, DPI changes, and real-world file handling.
+Run this before publishing a NativePad build. It is deliberately manual-heavy:
+the highest-risk surfaces — Win32 painting, common dialogs, printing, DPI
+changes, and real-world files — have no automated coverage.
 
-## Version and Build
+Work top to bottom. Anything that fails blocks the release.
 
-- Confirm `src/NativePad.rc` has the intended `major.minor.patch` before the
-  Release build. The build step increments the fourth component automatically.
-- Confirm `FILEVERSION`, `PRODUCTVERSION`, `FileVersion`, and `ProductVersion`
-  stay aligned after the build.
-- Confirm the About dialog shows the expected version, build timestamp, author,
-  and GPL V3 license.
-- Build Release x64.
-- Run `NativePad.Tests.exe` from the Release output folder.
-- Confirm GitHub Actions `CI` passes on `main`.
+## 1. Version and Build
 
-## File Workflows
+- [ ] `src/NativePad.rc` has the intended `major.minor.patch` before the Release
+      build. The build increments the fourth component itself.
+- [ ] `FILEVERSION`, `PRODUCTVERSION`, `FileVersion`, and `ProductVersion`
+      still agree after the build.
+- [ ] Release x64 builds clean, with no warnings.
+- [ ] `bin\x64\Release\NativePad.Tests.exe` passes, exit code `0`.
+- [ ] GitHub Actions `CI` is green on `main`.
+- [ ] The About dialog shows the expected version, build timestamp, author, and
+      GPL V3 licence.
+- [ ] [CHANGELOG.md](../CHANGELOG.md) has an entry for this version.
 
-- New prompts to save a dirty document.
-- Open works from the File menu, `Ctrl+O`, drag/drop, and command-line path.
-- Save preserves the detected encoding and line endings.
-- Save As can save as UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, and ANSI.
-- ANSI Save As rejects text that cannot be represented by the system ANSI code
-  page without truncating the target file.
-- Exit prompts for dirty documents and exits cleanly after Save, Don't Save, and
-  Cancel paths.
+## 2. File Workflows
 
-## Editor Behavior
+- [ ] New prompts to save a modified document.
+- [ ] Open works from the File menu, `Ctrl+O`, drag-and-drop, and a
+      command-line path.
+- [ ] Save preserves the detected encoding and line endings.
+- [ ] Save As writes UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, and ANSI.
+- [ ] An ANSI Save As of unrepresentable text is refused without truncating the
+      target file.
+- [ ] Exit prompts on a modified document and exits cleanly after Save, Don't
+      Save, and Cancel.
 
-- Typing, delete, cut, copy, paste, undo, and redo work on normal editable files.
-- Double-click selects a word/token.
-- Triple-click selects the logical line.
-- Select All works on editable and mapped documents.
-- The caret blinks and remains visible while typing, scrolling, and resizing.
-- The mouse cursor is an I-beam only over editable text, not over menus, status
-  bar, scrollbars, or dialogs.
+## 3. Editing
 
-## Search and Replace
+- [ ] Typing, delete, cut, copy, paste, undo, and redo work.
+- [ ] Double-click selects a word; triple-click selects the logical line.
+- [ ] Select All works on editable and mapped documents.
+- [ ] The caret blinks and stays visible while typing, scrolling, and resizing.
+- [ ] The I-beam appears only over editable text — not over menus, the status
+      bar, scrollbars, or dialogs.
+- [ ] `Ctrl+Shift+D`, `Ctrl+Shift+K`, `Alt+Up`, and `Alt+Down` each form a
+      single undo step and preserve line endings.
 
-- Find, Find Next, and Find Previous wrap correctly.
-- Match case changes results.
-- Up/Down direction works in Find and Replace.
-- Replace changes only the selected match.
-- Replace All reports the replacement count.
-- Esc closes Find/Replace dialogs without losing the editor selection.
+## 4. Search and Replace
 
-## Recent Files and Line Operations
+- [ ] Find, Find Next, and Find Previous wrap correctly.
+- [ ] Match case changes the results.
+- [ ] Up/Down direction works in both Find and Replace.
+- [ ] Replace changes only the selected match; Replace All reports its count.
+- [ ] `Esc` closes the dialogs without losing the editor selection.
 
-- Opening files populates the File-menu recent list, most recent first, with no
-  duplicates and capped at eight entries.
-- The recent list persists across restarts and survives via the INI.
-- Selecting a recent entry prompts to save a dirty document first; a recent
-  entry whose file no longer exists is removed after the failed open.
-- Clear Recent Files empties the list.
-- Ctrl+Shift+D duplicates the caret line; Ctrl+Shift+K deletes it; Alt+Up and
-  Alt+Down move it; each is a single undo step and preserves line endings.
+## 5. Recent Files
 
-## Format and View
+- [ ] Opening files fills the list, most recent first, no duplicates, capped at
+      eight.
+- [ ] The list survives a restart.
+- [ ] A recent entry prompts to save a modified document first, and an entry
+      whose file no longer exists is removed after the failed open.
+- [ ] Clear Recent Files empties the list.
 
-- Ctrl+mouse-wheel, Ctrl+Plus/Minus, and Ctrl+0 zoom the editor; the status bar
-  shows the current percentage and the saved font size is unchanged.
+## 6. Format and View
 
-- Word Wrap toggles without corrupting scroll position.
-- Go To and status-bar line count remain available while Word Wrap is enabled.
-- Font dialog can resize without repaint artifacts.
-- Line Numbers toggle and persist.
-- Status Bar toggle persists and shows line, column, total lines, encoding, and
-  character count.
-- With line numbers enabled and Word Wrap disabled, long pasted lines do not
-  paint into the gutter while horizontally scrolled.
+- [ ] Word Wrap toggles without corrupting the scroll position.
+- [ ] Go To and the status-bar line count stay available with Word Wrap on.
+- [ ] The Font dialog resizes without repaint artifacts.
+- [ ] Line Numbers and Status Bar toggle and persist.
+- [ ] With line numbers on and Word Wrap off, long pasted lines do not paint
+      into the gutter while horizontally scrolled.
+- [ ] `Ctrl`+wheel, `Ctrl+Plus/Minus`, and `Ctrl+0` zoom; the status bar shows
+      the percentage and the saved font size is unchanged.
 
-## Dark Mode and DPI
+## 7. Theme and DPI
 
-- App follows system dark mode when no manual override is set.
-- View > Dark Mode override persists.
-- Main menus, editor context menu, status bar, custom dialogs, and scrollbars are
-  usable in dark mode.
-- Windows High Contrast disables custom dark styling and all custom-painted
-  surfaces use readable system colours.
-- NativePad-owned save confirmations, errors, and informational prompts use the
-  custom dark message dialog.
-- Custom message prompt icons remain crisp at 150% and 200% scaling.
-- Alt/F10 reveals top-level menu mnemonic underlines, and Esc returns focus to
-  the editor.
-- Popup menu borders and shadows are subtle and do not steal active-window focus.
-- Custom popup menus and the editor context menu show the arrow cursor, not the
-  editor I-beam.
-- Moving between 100%, 125%, 150%, and 200% DPI monitors keeps text, menus,
-  dialogs, and scrollbars correctly sized.
-- Disconnecting the monitor that holds the window moves it back onto the primary
-  monitor instead of leaving it off-screen, for both normal and maximized
-  windows. Launching with a saved position on a now-absent monitor also lands
-  on the primary monitor.
-- Startup and wake-from-sleep repaint directly to the active theme without a
-  white editor surface persisting.
+- [ ] The app follows system dark mode when no override is set, and the View
+      override persists.
+- [ ] Menus, the editor context menu, status bar, custom dialogs, and
+      scrollbars are all usable in dark mode.
+- [ ] Windows High Contrast disables custom dark styling and every custom
+      surface uses readable system colours.
+- [ ] NativePad-owned save confirmations, errors, and information prompts use
+      the custom message dialog.
+- [ ] Message prompt icons stay crisp at 150% and 200%.
+- [ ] `Alt`/`F10` reveals mnemonic underlines; `Esc` returns focus to the
+      editor.
+- [ ] Popup menu borders and shadows are subtle and do not steal activation.
+- [ ] Popup and context menus show the arrow cursor, not the I-beam.
+- [ ] Moving between 100%, 125%, 150%, and 200% monitors keeps text, menus,
+      dialogs, and scrollbars correctly sized.
+- [ ] Disconnecting the monitor holding the window moves it to the primary
+      monitor — normal and maximized — and launching with a saved position on
+      an absent monitor also lands on the primary.
+- [ ] Startup and wake-from-sleep repaint straight into the active theme, with
+      no lingering white editor surface.
 
-## Updates
+## 8. Large Files
 
-- Help does not show update-specific menu items.
-- About dialog Check for Updates reports the current version when no newer
-  release is available.
-- About dialog Check automatically checkbox toggles the persisted setting.
-- Update settings are written to `%LOCALAPPDATA%\NativePad\NativePad.ini`,
-  including `UpdateUrl`, `CheckForUpdates`, and `LastUpdateCheckUtc`.
-- A downloaded installer is stored under `%LOCALAPPDATA%\NativePad\Updates`.
-- Dirty documents prompt before the downloaded installer is launched.
+- [ ] Files over 512 MB open through the read-only mapped backend.
+- [ ] Scrolling and Find stay responsive on multi-million-line files.
+- [ ] Save, Save As, Replace, Replace All, Cut, Delete, typing, and Paste are
+      disabled for mapped files.
+- [ ] Copy, Select All, Find, Find Next/Previous, and Go To work on them.
 
-## External Changes and Follow Tail
+### Editable large files
 
-- Editing the open file in another program and re-activating NativePad prompts
-  to reload; declining does not re-prompt until the file changes again.
-- The reload prompt warns explicitly when unsaved changes would be lost.
-- View > Follow Tail and F6 toggle tail following; the title shows `[Tail]` and
-  the status bar shows `FOLLOW TAIL`.
-- While following, appended lines from a live writer appear within about a
-  second and the view stays pinned to the end of the document.
-- Follow Tail on a mapped multi-GB file follows appends without a full rescan
-  (scrolling stays responsive while the file grows).
-- Editing commands and Save are disabled while Follow Tail is active and come
-  back when it is turned off.
-- Log rotation (delete + rename) while following reloads the new file.
-- Opening a different file or File > New turns Follow Tail off.
+- [ ] **Edit > Enable Large-File Editing** is enabled only for a read-only
+      mapped file; switching shows `[Large file]` in the title and `LARGE FILE`
+      in the status bar.
+- [ ] Typing, paste, cut, delete, undo/redo, find, and replace all work.
+- [ ] Save writes the edited content back, reopening shows the change, and the
+      file is replaced atomically — an interrupted save leaves no truncated
+      file.
+- [ ] Save As writes a new file in the document's encoding.
+- [ ] Editing near multibyte UTF-8 characters never corrupts them.
+- [ ] Printing and Save As encoding conversion are disabled.
+- [ ] Opening another file or File > New releases the mapping.
 
-## Crash Recovery
+## 9. External Changes and Follow Tail
 
-- Typing into a document and killing the process from Task Manager leaves a
-  journal pair under `%LOCALAPPDATA%\NativePad\Recovery`.
-- The next launch offers to restore the unsaved work; accepting restores the
-  exact text as a dirty document with the original path and encoding.
-- Declining the restore prompt discards the journal without another prompt on
-  the following launch.
-- Save, Save As, File > New, opening another file, and clean exit all remove
-  the journal.
-- Two NativePad instances running at once do not claim each other's journals.
+- [ ] Editing the open file elsewhere and re-activating NativePad prompts to
+      reload; declining does not re-prompt until the file changes again.
+- [ ] The reload prompt warns explicitly when unsaved changes would be lost.
+- [ ] `F6` and **View > Follow Tail** toggle following; the title shows
+      `[Tail]` and the status bar shows `FOLLOW TAIL`.
+- [ ] Appended lines from a live writer appear within about a second and the
+      view stays pinned to the end.
+- [ ] Following a multi-GB mapped file does not trigger a full rescan —
+      scrolling stays responsive as the file grows.
+- [ ] Editing commands and Save are disabled while following, and return
+      afterwards.
+- [ ] Log rotation (delete + rename) reloads the new file.
+- [ ] Opening a different file or File > New turns Follow Tail off.
 
-## Large Files
+## 10. Crash Recovery
 
-- Files over the editable threshold open through the read-only mapped backend.
-- Scrolling remains responsive on multi-million-line files.
-- Find remains responsive on large mapped files.
-- Save, Save As, Replace, Replace All, Cut, Delete, typing, and Paste are
-  disabled for mapped read-only files.
-- Copy, Select All, Find, Find Next/Previous, and Go To work on mapped files.
+- [ ] Typing into a document and killing the process from Task Manager leaves a
+      journal pair under `%LOCALAPPDATA%\NativePad\Recovery`.
+- [ ] The next launch offers to restore it, and accepting restores the exact
+      text as a dirty document with the original path and encoding.
+- [ ] Declining discards the journal without re-prompting on the next launch.
+- [ ] Save, Save As, File > New, opening another file, and a clean exit all
+      remove the journal.
+- [ ] Two NativePad instances do not claim each other's journals.
 
-## Editable Large Files
+## 11. Printing
 
-- Edit > Enable Large-File Editing is enabled only for a read-only mapped large
-  file, and switching shows `[Large file]` in the title and `LARGE FILE` in the
-  status bar.
-- After enabling, typing, paste, cut, delete, undo/redo, find, and replace work.
-- Save writes the edited content back, and reopening the file shows the change;
-  the file is replaced atomically (no truncated file if the save is interrupted).
-- Save As writes a new file in the document's encoding.
-- Editing near multibyte UTF-8 characters never corrupts them (erase snaps to
-  code-point boundaries).
-- Printing and Save As encoding conversion are disabled for large files.
-- Opening another file or File > New releases the large-file mapping.
+- [ ] Page Setup opens and its margins persist.
+- [ ] Print opens the native dialog and runs without blocking editor repaint.
+- [ ] Long files paginate consistently.
+- [ ] Wrapped and unwrapped output are compared against classic Notepad.
 
-## Printing
+## 12. Updates
 
-- Page Setup opens and persists margins.
-- Print opens the native print dialog.
-- Printing runs without blocking editor repaint.
-- Long files paginate consistently.
-- Wrapped and unwrapped output are manually compared against classic Notepad.
+- [ ] The Help menu shows no update-specific items — updates live in About.
+- [ ] About > Check for Updates reports the current version when nothing newer
+      exists.
+- [ ] The **Check automatically** checkbox toggles the persisted setting.
+- [ ] `UpdateUrl`, `CheckForUpdates`, and `LastUpdateCheckUtc` are written to
+      `%LOCALAPPDATA%\NativePad\NativePad.ini`.
+- [ ] A downloaded installer lands in `%LOCALAPPDATA%\NativePad\Updates`.
+- [ ] A modified document prompts before the downloaded installer launches.
 
-## Packaging
+## 13. Packaging
 
-- Run the `Release Package` GitHub Actions workflow with the version already
-  committed in `src/NativePad.rc`.
-- Download and inspect the ZIP artifact.
-- Confirm the ZIP contains `NativePad.exe`, `README.md`, `LICENSE`,
-  `THIRD_PARTY_NOTICES.md`, `licenses`, and `docs`.
-- Confirm `licenses\source\darkmodelib` contains the complete corresponding
-  Darkmodelib source in both the ZIP and installed application.
-- Launch `NativePad.exe` from the extracted ZIP.
-- Download and inspect the Inno Setup installer artifact.
-- Install NativePad from the installer, launch it from the Start Menu shortcut,
-  then uninstall it from Windows Settings.
-- Confirm Setup and Uninstall follow Windows light/dark app mode.
-- Run the installer over an older version and confirm the update option is
-  shown.
-- Run the installer over the same version and confirm the repair/reinstall
-  option is shown.
-- Confirm the installer maintenance page can launch the existing uninstaller.
-- Keep unsigned ZIP and installer releases clearly labeled until code signing is
-  added.
+- [ ] Run the `Release Package` workflow with the version committed in
+      `src/NativePad.rc`.
+- [ ] The ZIP contains `NativePad.exe`, `README.md`, `LICENSE`,
+      `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`, `licenses`, and `docs`.
+- [ ] `licenses\source\darkmodelib` holds the complete corresponding
+      Darkmodelib source, in both the ZIP and the installed application.
+- [ ] `NativePad.exe` launches from the extracted ZIP.
+- [ ] Install from the installer, launch from the Start Menu shortcut, then
+      uninstall from Windows Settings.
+- [ ] Setup and Uninstall follow the Windows light/dark app mode.
+- [ ] Running the installer over an older version offers the update option.
+- [ ] Running it over the same version offers repair/reinstall.
+- [ ] The maintenance page can launch the existing uninstaller.
+- [ ] The ZIP and installer are clearly labelled unsigned on the release page.

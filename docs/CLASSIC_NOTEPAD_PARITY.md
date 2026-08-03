@@ -1,148 +1,97 @@
-# Classic Notepad Feature Parity Plan
+# Classic Notepad Parity
 
-NativePad targets feature parity with the last classic, menu-driven Windows Notepad experience rather than the newer tabbed Store Notepad. The compatibility goal is a fast native editor that behaves predictably for users who know classic Notepad, while keeping NativePad's performance work for large files and modern dark mode.
+NativePad targets the last classic, menu-driven Windows Notepad — not the newer
+tabbed Store app. The goal is that someone who knows classic Notepad can use
+NativePad without relearning anything, while getting large-file handling and
+dark mode that classic Notepad never had.
 
-## Current NativePad baseline
+This page records where NativePad matches, where it deliberately differs, and
+what remains open.
 
-- Native C++20 Win32 executable with common file dialogs.
-- Dark/light window frame, DPI-aware menu strip, status bar, and DirectWrite editor.
-- New, Open, Save, Save As, Exit, drag-and-drop open, and command-line file open.
-- Classic File, Edit, Format, View, and Help menu layout with command IDs and accelerators.
-- Undo, redo, cut, copy, paste, delete, select all, drag selection,
-  double-click word selection, triple-click line selection, caret movement, and
-  scrolling.
-- Find, Find Next, Find Previous, Replace, Go To, Time/Date, Word Wrap, Font,
-  Line Numbers, Page Setup, Print, Status Bar toggle, editor right-click context
-  menu, and About.
-- Recent files list, editor zoom (Ctrl+scroll, Ctrl+Plus/Minus, Ctrl+0), and
-  line operations (duplicate, delete, move up/down) as modern-Notepad-aligned
-  conveniences.
-- UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI fallback loading; Save preserves
-  detected encoding and line endings where representable.
-- Memory-mapped normal file loading, a read-only mapped backend for files above the editable limit, and an opt-in editable piece-table-over-mmap backend for large files.
-- Remaining gaps are broader print fidelity validation against classic Notepad
-  and large-file printing/encoding-conversion support.
+## Command Parity
 
-## Phase 1: Core classic command parity
+Every classic Notepad menu command exists in NativePad with the same
+accelerator.
 
-Goal: make the menus and shortcut surface recognizable as classic Notepad.
+| Classic Notepad | NativePad |
+| --- | --- |
+| File: New, Open, Save, Save As, Page Setup, Print, Exit | Match |
+| Edit: Undo, Cut, Copy, Paste, Delete, Find, Find Next, Replace, Go To, Select All, Time/Date | Match |
+| Format: Word Wrap, Font | Match, with a custom theme-aware Font dialog instead of `ChooseFont` |
+| View: Status Bar | Match |
+| Help: About | Match. **View Help** is not implemented — there is no bundled help file |
+| Accelerators: `Ctrl+N/O/S/P/Z/X/C/V/F/H/G/A`, `F3`, `Shift+F3`, `F5`, `Del`, `Alt+F4` | Match |
 
-- File: add Page Setup and Print using the native Win32 common dialogs.
-- Edit: add Delete, Find, Find Next, Find Previous, Replace, Go To, and Time/Date.
-- Format: add Word Wrap and Font.
-- View: add Status Bar toggle and preserve Dark Mode as a NativePad extension.
-- Help: add About NativePad.
-- Keyboard: match classic accelerators where practical, including F3, Shift+F3, Ctrl+F, Ctrl+H, Ctrl+G, F5, Del, Ctrl+P, and Alt+F4.
+Menu commands and accelerators route through the same handlers, and enabled or
+disabled state updates with selection and read-only document state.
 
-Acceptance:
+## Deliberate Differences
 
-- Every visible classic Notepad menu item exists and either works or is intentionally disabled only when classic Notepad would disable it.
-- Shortcuts route through the same command handlers as menu clicks.
-- Commands update enabled/disabled state when selection or read-only document state changes.
+| Behavior | Classic Notepad | NativePad | Why |
+| --- | --- | --- | --- |
+| Go To under Word Wrap | Disabled | Available | Matches modern Notepad; the line index is valid either way |
+| Undo | Single level, no Redo | Multi-level, with Redo on `Ctrl+Y` | Single-level undo is a limitation, not a behavior worth reproducing |
+| Find Previous | Direction radio only | Also `Shift+F3` | Faster, and matches modern Notepad |
+| Font dialog | `ChooseFont` common dialog | Custom dialog | The common dialog cannot be themed for dark mode |
+| Message prompts | System message boxes | Custom `MessageDialog` | System boxes ignore the app's dark theme |
+| Very large files | Loads, or fails, slowly | Read-only memory-mapped view | Never silently truncates, never blocks on a full decode |
+| Settings storage | Registry | `%LOCALAPPDATA%\NativePad\NativePad.ini` | Portable; a ZIP install leaves no registry footprint |
 
-## Phase 2: Text behavior fidelity
+## NativePad Additions
 
-Goal: reduce surprises when opening, editing, and saving ordinary text files.
+Beyond classic Notepad, aligned with modern Notepad where an equivalent exists:
 
-- Done: preserve detected line endings when saving unless the file was mixed-line
-  content or the document was newly created.
-- Done: preserve encoding choice where possible, with Save As exposing UTF-8,
-  UTF-8 BOM, UTF-16 LE/BE, and ANSI choices.
-- Detect UTF-8 with BOM, UTF-8 without BOM, UTF-16 LE, UTF-16 BE, and ANSI consistently.
-- Keep dirty-state prompts aligned with classic Notepad for New, Open, Exit, drag/drop, and command-line open.
-- Go To stays available while Word Wrap is enabled, matching modern Windows Notepad (classic Notepad disabled it under Word Wrap).
-- Keep status bar line/column updates correct with CRLF, LF, long lines, selection, and horizontal scrolling.
+- Dark mode with a manual override, plus Windows High Contrast support.
+- Per-monitor v2 DPI awareness.
+- Line numbers as an optional editor gutter.
+- Zoom (`Ctrl`+wheel, `Ctrl+Plus/Minus`, `Ctrl+0`), 10%–500%.
+- Recent files in the File menu.
+- Duplicate Line, Delete Line, and Move Line Up/Down.
+- Follow Tail (`F6`) for logs that are still being written, and a reload prompt
+  when the open file changes on disk.
+- Crash recovery for unsaved work.
+- Read-only memory-mapped viewing above 512 MB, and opt-in editing of those
+  files through a piece table over the mapping.
+- Save As encoding picker, and an update check against GitHub releases.
 
-Acceptance:
+## Text Behavior
 
-- Round-trip smoke files keep expected line endings and encoding.
-- Dirty prompt decisions are covered by manual tests and small unit tests where possible.
-- Go To lands on the expected line for CRLF, LF, and mixed-line sample files.
+- Encoding detection covers UTF-8 with BOM, UTF-8 without BOM, UTF-16 LE,
+  UTF-16 BE, and ANSI fallback.
+- Save preserves the detected encoding; Save As can change it, and refuses an
+  ANSI save that would lose characters rather than writing a truncated file.
+- Line endings are normalized back to the style the file was opened with.
+  Files that were already mixed stay mixed.
+- Dirty-state prompts match classic Notepad for New, Open, Exit, drag-and-drop
+  open, and command-line open.
+- Status bar line and column stay correct across CRLF, LF, long lines,
+  selection, and horizontal scrolling.
 
-## Phase 3: Find and replace quality
+## Open Items
 
-Goal: match classic Notepad search workflows while staying responsive on larger files.
+- Print fidelity — wrapped and unwrapped pagination has not been compared
+  against classic Notepad output at the level of detail the rest of the parity
+  work has received.
+- Printing and encoding conversion are unavailable for editable large files.
+- No `Ctrl+Backspace` word delete (a modern-Notepad convenience, absent from
+  classic Notepad).
+- Startup, load, first-paint, find, and large-file index timings are not yet
+  instrumented, so performance claims rest on manual observation.
 
-- Implement Find and Replace modeless dialogs.
-- Support match case and wrap-around search.
-- Support Find Next and Find Previous from caret/selection.
-- Highlight the active match through the existing editor selection path.
-- Keep search incremental enough that large documents do not freeze the UI.
+## Manual Parity Check
 
-Acceptance:
+Walk this list when validating a release:
 
-- Find/replace works across line breaks, document boundaries, and repeated matches.
-- Replace All reports the replacement count.
-- Esc closes dialogs without losing the main editor selection.
+- **File:** New, Open, Save, Save As, Recent Files, Page Setup, Print, Exit.
+- **Edit:** Undo, Cut, Copy, Paste, Delete, Find, Find Next, Find Previous,
+  Replace, Go To, Select All, Time/Date, Duplicate/Delete Line, Move Line
+  Up/Down.
+- **Format:** Word Wrap, Font.
+- **View:** Zoom In/Out/Restore, Line Numbers, Status Bar, Dark Mode, Follow
+  Tail.
+- **Help:** Set as Default Editor, About.
+- **Behavior:** dirty prompts, command-line open, drag-and-drop open, dark and
+  light mode, read-only mapped viewing, encoding load/save and Save As encoding
+  changes, mouse selection, line/column status, keyboard shortcuts.
 
-## Phase 4: Print and page setup
-
-Goal: provide the classic print workflow using Windows native APIs.
-
-- Use Page Setup and Print common dialogs.
-- Render text through DirectWrite/GDI print-friendly pagination.
-- Respect selected font, margins, page orientation, and word wrap.
-- Add document title/page header handling only if matching the target classic Notepad behavior requires it.
-
-Acceptance:
-
-- Print preview is not required for classic parity, but printed output must paginate correctly.
-- Page Setup settings persist between launches with the rest of the user
-  preferences.
-- Printing a long wrapped file produces stable line and page breaks.
-
-## Phase 5: Preferences and persistence
-
-Goal: keep user choices between launches without adding unnecessary UI.
-
-- Persist dark mode override, word wrap, line numbers, status bar visibility,
-  window placement, and font.
-- Let system dark mode remain the default when no explicit NativePad preference exists.
-- Keep settings in a simple per-user file with versioned schema.
-- Current implementation stores preferences under
-  `%LOCALAPPDATA%\NativePad\NativePad.ini`.
-
-Acceptance:
-
-- Relaunch restores the same visual/editor preferences.
-- Bad settings data falls back cleanly to defaults.
-
-## Phase 6: Performance beyond classic Notepad
-
-Goal: keep NativePad materially faster and more robust than classic Notepad for large text files.
-
-- Keep memory-mapped load for editable files.
-- Keep read-only mapped viewing for files over the editable limit and make that state impossible to modify or save over the source file.
-- Keep scalable mapped find behavior for very large documents and expand it only with measurable latency targets.
-- Add instrumentation for cold startup, load time, first paint, find latency, and mapped large-file open/index time.
-
-Acceptance:
-
-- Startup remains effectively instant on typical text files.
-- Very large files open into read-only mapped viewing without allocating a full decoded copy.
-- Large-file commands never silently truncate or overwrite the source.
-
-## Suggested implementation order
-
-1. Done: add missing menus, command IDs, accelerators, and disabled-state plumbing.
-2. Done: implement Find/Find Next/Find Previous, validating editor selection, caret, and modeless dialog ownership.
-3. Done: add Replace, Go To, and the editor right-click context menu.
-4. Done: add Word Wrap and Status Bar toggle (Go To remains available while wrapping, matching modern Notepad).
-5. Done: add Font dialog and editor rendering updates.
-6. Done: add Page Setup and Print, with print rendering/spooling on a worker thread.
-7. Done: add line-ending and encoding preservation.
-8. Done: add persisted preferences for the main visual/editor choices.
-9. Done: add optional persisted line numbers as a NativePad view extension.
-10. Done: add a Save As encoding picker.
-11. Expand smoke tests and manual parity checklist.
-
-## Manual parity checklist
-
-- File: New, Open, Save, Save As, Recent Files, Page Setup, Print, Exit.
-- Edit: Undo, Cut, Copy, Paste, Delete, Find, Find Next, Find Previous, Replace, Go To, Select All, Time/Date, Duplicate/Delete Line, Move Line Up/Down.
-- Format: Word Wrap, Font.
-- View: Zoom In/Out/Restore, Line Numbers, Status Bar.
-- Help: About.
-- Behavior: dirty prompts, command-line open, drag/drop open, dark/light mode,
-  read-only mapped viewing, encoding load/save and Save As encoding changes,
-  mouse selection, line/column status, keyboard shortcuts.
+The full pre-release pass is [Release Checklist](RELEASE_CHECKLIST.md).
