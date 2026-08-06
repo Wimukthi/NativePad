@@ -9,6 +9,7 @@ in [Usage](USAGE.md); this page is the inventory.
 | --- | --- |
 | New | Prompts to save a modified document |
 | Open | Common file dialog, drag-and-drop, and command-line path |
+| Text file associations | Open With registration for common plain-text/data extensions; Windows still requires confirmation for the default choice |
 | Save | Preserves the detected encoding and line endings |
 | Save As | Native dialog with an encoding picker |
 | Recent Files | Eight entries in the File menu, persisted; missing files are pruned when opened |
@@ -45,13 +46,14 @@ in [Usage](USAGE.md); this page is the inventory.
 | Dark Mode | Follows the system theme, with a persisted manual override |
 | Zoom | 10%–500% in 10% steps via `Ctrl`+wheel, `Ctrl+Plus/Minus`, `Ctrl+0`; scales rendering only, not the saved font size |
 | Follow Tail | `F6`; follows appended content and keeps the caret at the end |
+| Syntax highlighting | Line-local color highlighting for JSON, INI/configuration, Markdown, and XML; plain text and large-file backends use the fast single-brush renderer |
 
 ## Help and System Integration
 
 | Feature | Notes |
 | --- | --- |
 | About | Version, build timestamp, author, and licence |
-| Set as Default Editor | Registers a per-user `.txt` handler, then opens Windows Default Apps for confirmation — Windows requires the user to confirm. The menu shows a check when NativePad is the current default |
+| Set as Default Text Editor | Registers common plain-text handlers, then opens Windows Default Apps for confirmation — Windows requires the user to confirm. The menu shows a check when NativePad is the current `.txt` default |
 | Check for Updates | About-dialog command plus optional automatic startup checks; downloads and verifies the installer before launching it |
 
 ## Text and File Behavior
@@ -60,8 +62,8 @@ in [Usage](USAGE.md); this page is the inventory.
 | --- | --- |
 | UTF-8 load | With and without BOM |
 | UTF-16 LE/BE load | Detected by BOM |
-| ANSI fallback load | Used when UTF-8 decoding fails |
-| Save encoding | Preserves UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI where representable; Save As can change it |
+| ANSI fallback load | Used when UTF-8 decoding fails; `.nfo` files use OEM 437 for legacy DOS artwork |
+| Save encoding | Preserves UTF-8, UTF-8 BOM, UTF-16 LE/BE, ANSI, and OEM 437 where representable; Save As can change it |
 | Line-ending preservation | CRLF/LF/CR files normalize back to the detected style; mixed files stay mixed |
 | Preferences | INI-backed: theme override, word wrap, line numbers, status bar, font, window placement, page margins, recent files, update URL and update-check preference |
 | Large-file viewing | Read-only mapped backend above 512 MB |

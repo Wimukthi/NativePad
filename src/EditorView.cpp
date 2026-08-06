@@ -93,6 +93,11 @@ struct EditorView::Impl {
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> lineNumberBrush;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> lineNumberBackgroundBrush;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> lineNumberSeparatorBrush;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> syntaxKeywordBrush;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> syntaxStringBrush;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> syntaxNumberBrush;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> syntaxCommentBrush;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> syntaxPunctuationBrush;
 };
 
 EditorView::EditorView() : impl_(new Impl()) {
@@ -104,6 +109,13 @@ EditorView::EditorView() : impl_(new Impl()) {
         RGB(28, 28, 28),
         RGB(150, 150, 150),
         RGB(54, 54, 54),
+    };
+    syntaxTheme_ = {
+        RGB(86, 156, 214),
+        RGB(206, 145, 120),
+        RGB(181, 206, 168),
+        RGB(106, 153, 85),
+        RGB(180, 180, 180),
     };
 }
 
@@ -231,6 +243,39 @@ void EditorView::SetTheme(EditorTheme theme) {
         impl_->lineNumberSeparatorBrush->SetColor(ToD2DColor(theme_.lineNumberSeparator));
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void EditorView::SetSyntaxTheme(EditorSyntaxTheme theme) {
+    syntaxTheme_ = theme;
+    if (impl_->syntaxKeywordBrush) {
+        impl_->syntaxKeywordBrush->SetColor(ToD2DColor(syntaxTheme_.keyword));
+    }
+    if (impl_->syntaxStringBrush) {
+        impl_->syntaxStringBrush->SetColor(ToD2DColor(syntaxTheme_.string));
+    }
+    if (impl_->syntaxNumberBrush) {
+        impl_->syntaxNumberBrush->SetColor(ToD2DColor(syntaxTheme_.number));
+    }
+    if (impl_->syntaxCommentBrush) {
+        impl_->syntaxCommentBrush->SetColor(ToD2DColor(syntaxTheme_.comment));
+    }
+    if (impl_->syntaxPunctuationBrush) {
+        impl_->syntaxPunctuationBrush->SetColor(ToD2DColor(syntaxTheme_.punctuation));
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void EditorView::SetSyntaxLanguage(SyntaxLanguage language) {
+    if (syntaxLanguage_ == language) {
+        return;
+    }
+
+    syntaxLanguage_ = language;
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+SyntaxLanguage EditorView::SyntaxLanguageForDocument() const noexcept {
+    return syntaxLanguage_;
 }
 
 void EditorView::SetFont(EditorFontSpec font) {
@@ -595,6 +640,10 @@ void EditorView::Paint() {
     const std::size_t selectionEnd = SelectionEnd();
     const float xOrigin = wordWrap_ ? textLeft : textLeft - (static_cast<float>(horizontalColumn_) * charWidth_);
     const std::size_t wrapColumns = WrapColumnCount();
+    bool haveHighlightedLine = false;
+    std::size_t highlightedLine = 0;
+    std::wstring highlightedLineText;
+    std::vector<SyntaxSpan> highlightedSpans;
 
     if (showLineNumbers_ && gutterWidth > 0.0f && impl_->lineNumberBackgroundBrush && impl_->lineNumberSeparatorBrush) {
         impl_->target->FillRectangle(D2D1::RectF(0.0f, 0.0f, gutterWidth, height), impl_->lineNumberBackgroundBrush.Get());
@@ -654,13 +703,55 @@ void EditorView::Paint() {
 
         const std::wstring text = DocumentTextRange(segmentStart, segmentEnd - segmentStart);
         if (hasTextClip && !text.empty()) {
-            impl_->target->DrawTextW(
-                text.c_str(),
-                static_cast<UINT32>(text.size()),
-                impl_->textFormat.Get(),
-                D2D1::RectF(xOrigin, y, width + std::abs(xOrigin) + 2048.0f, y + lineHeight_),
-                impl_->textBrush.Get(),
-                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            if (syntaxLanguage_ == SyntaxLanguage::PlainText) {
+                impl_->target->DrawTextW(
+                    text.c_str(),
+                    static_cast<UINT32>(text.size()),
+                    impl_->textFormat.Get(),
+                    D2D1::RectF(xOrigin, y, width + std::abs(xOrigin) + 2048.0f, y + lineHeight_),
+                    impl_->textBrush.Get(),
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            } else {
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+                const float layoutWidth = width + std::abs(xOrigin) + 2048.0f;
+                if (SUCCEEDED(impl_->dwriteFactory->CreateTextLayout(
+                        text.c_str(),
+                        static_cast<UINT32>(text.size()),
+                        impl_->textFormat.Get(),
+                        layoutWidth,
+                        lineHeight_,
+                        layout.GetAddressOf()))) {
+                    if (!haveHighlightedLine || highlightedLine != visual.line) {
+                        highlightedLine = visual.line;
+                        highlightedLineText = DocumentTextRange(lineStart, lineEnd - lineStart);
+                        highlightedSpans = syntaxHighlighter_.HighlightLine(syntaxLanguage_, highlightedLineText);
+                        haveHighlightedLine = true;
+                    }
+                    const std::size_t segmentOffset = segmentStart - lineStart;
+                    for (const SyntaxSpan& span : highlightedSpans) {
+                        const std::size_t spanStart = std::max(span.start, segmentOffset);
+                        const std::size_t spanEnd = std::min(span.start + span.length, segmentOffset + text.size());
+                        if (spanStart >= spanEnd || spanStart - segmentOffset > UINT32_MAX || spanEnd - spanStart > UINT32_MAX) {
+                            continue;
+                        }
+
+                        ID2D1SolidColorBrush* brush = SyntaxBrush(span.color);
+                        if (brush == nullptr) {
+                            continue;
+                        }
+
+                        const DWRITE_TEXT_RANGE range{
+                            static_cast<UINT32>(spanStart - segmentOffset),
+                            static_cast<UINT32>(spanEnd - spanStart)};
+                        layout->SetDrawingEffect(brush, range);
+                    }
+                    impl_->target->DrawTextLayout(
+                        D2D1::Point2F(xOrigin, y),
+                        layout.Get(),
+                        impl_->textBrush.Get(),
+                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+            }
         }
     }
 
@@ -694,6 +785,11 @@ void EditorView::DiscardDeviceResources() {
     impl_->lineNumberBrush.Reset();
     impl_->lineNumberBackgroundBrush.Reset();
     impl_->lineNumberSeparatorBrush.Reset();
+    impl_->syntaxKeywordBrush.Reset();
+    impl_->syntaxStringBrush.Reset();
+    impl_->syntaxNumberBrush.Reset();
+    impl_->syntaxCommentBrush.Reset();
+    impl_->syntaxPunctuationBrush.Reset();
 }
 
 void EditorView::ResetDeviceResources() {
@@ -738,9 +834,32 @@ bool EditorView::EnsureDeviceResources() {
         impl_->target->CreateSolidColorBrush(ToD2DColor(theme_.lineNumberText), impl_->lineNumberBrush.GetAddressOf());
         impl_->target->CreateSolidColorBrush(ToD2DColor(theme_.lineNumberBackground), impl_->lineNumberBackgroundBrush.GetAddressOf());
         impl_->target->CreateSolidColorBrush(ToD2DColor(theme_.lineNumberSeparator), impl_->lineNumberSeparatorBrush.GetAddressOf());
+        impl_->target->CreateSolidColorBrush(ToD2DColor(syntaxTheme_.keyword), impl_->syntaxKeywordBrush.GetAddressOf());
+        impl_->target->CreateSolidColorBrush(ToD2DColor(syntaxTheme_.string), impl_->syntaxStringBrush.GetAddressOf());
+        impl_->target->CreateSolidColorBrush(ToD2DColor(syntaxTheme_.number), impl_->syntaxNumberBrush.GetAddressOf());
+        impl_->target->CreateSolidColorBrush(ToD2DColor(syntaxTheme_.comment), impl_->syntaxCommentBrush.GetAddressOf());
+        impl_->target->CreateSolidColorBrush(ToD2DColor(syntaxTheme_.punctuation), impl_->syntaxPunctuationBrush.GetAddressOf());
     }
 
     return impl_->textFormat != nullptr && impl_->target != nullptr && impl_->textBrush != nullptr;
+}
+
+ID2D1SolidColorBrush* EditorView::SyntaxBrush(SyntaxColor color) const noexcept {
+    switch (color) {
+    case SyntaxColor::Keyword:
+        return impl_->syntaxKeywordBrush.Get();
+    case SyntaxColor::String:
+        return impl_->syntaxStringBrush.Get();
+    case SyntaxColor::Number:
+        return impl_->syntaxNumberBrush.Get();
+    case SyntaxColor::Comment:
+        return impl_->syntaxCommentBrush.Get();
+    case SyntaxColor::Punctuation:
+        return impl_->syntaxPunctuationBrush.Get();
+    case SyntaxColor::PlainText:
+    default:
+        return nullptr;
+    }
 }
 
 void EditorView::RecreateTextFormat() {

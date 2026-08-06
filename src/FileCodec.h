@@ -10,10 +10,11 @@
 #include "TextFormat.h"
 
 // Text file loading and saving. Editable-sized files are decoded fully into
-// UTF-16 (with BOM/encoding detection); files above the editable limit are read
-// as a truncated read-only preview. Saving encodes into one buffer before the
-// target file is touched. The open/save pickers live here too because they
-// produce and consume the same encoding metadata.
+// UTF-16 (with BOM/encoding detection, including OEM 437 for NFO files); files
+// above the editable limit are read as a truncated read-only preview. Saving
+// encodes into one buffer before the target file is touched. The open/save
+// pickers live here too because they produce and consume the same encoding
+// metadata.
 
 namespace NativePad {
 

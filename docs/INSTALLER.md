@@ -86,11 +86,20 @@ The installer does **not** force NativePad as the `.txt` default. Windows
 protects default-app ownership, and silently reassigning it is neither reliable
 nor desirable.
 
-Use **Help > Set as Default Editor** inside NativePad instead: it registers the
-per-user `.txt` handler and opens Windows Default Apps so you can confirm.
+Use **Help > Set as Default Text Editor** inside NativePad instead: it registers
+the supported plain-text handlers and opens Windows Default Apps so you can
+confirm.
 
 ## Signing
 
 Releases are currently unsigned. SmartScreen will warn on first run for both the
 installer and the portable ZIP. Keep that clearly labelled on the release page
 until code signing is in place.
+
+The GitHub release workflow packs the application executable with the pinned,
+unmodified UPX 5.2.0 x64 build before creating the ZIP and installer. It
+verifies the UPX archive hash and runs `upx --test` on the packed executable.
+If code signing is added later, signing must happen after UPX packing. UPX
+packing can also trigger heuristic antivirus detections; the release workflow
+has a `pack_with_upx` switch that can produce an uncompressed package when
+needed.

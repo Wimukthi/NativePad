@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "TextFileTypes.h"
+
 namespace NativePad {
 
 namespace {
@@ -126,6 +128,7 @@ LargeTextDocument& LargeTextDocument::operator=(LargeTextDocument&& other) noexc
     originalUnitCount_ = other.originalUnitCount_;
     encoding_ = other.encoding_;
     encodingLabel_ = std::move(other.encodingLabel_);
+    preferOem437_ = other.preferOem437_;
     lineEnding_ = other.lineEnding_;
     pieces_ = std::move(other.pieces_);
     addBytes_ = std::move(other.addBytes_);
@@ -146,6 +149,7 @@ LargeTextDocument& LargeTextDocument::operator=(LargeTextDocument&& other) noexc
     other.originalUnitCount_ = 0;
     other.encoding_ = FileEncoding::Utf8;
     other.encodingLabel_ = L"UTF-8/ANSI";
+    other.preferOem437_ = false;
     other.lineEnding_ = LineEnding::CrLf;
     other.maxLineLength_ = 0;
     other.dirty_ = false;
@@ -156,6 +160,8 @@ LargeTextDocument& LargeTextDocument::operator=(LargeTextDocument&& other) noexc
 
 bool LargeTextDocument::Open(const std::wstring& path, std::wstring& error) {
     Close();
+    const TextFileType* fileType = TextFileTypeForPath(path);
+    preferOem437_ = fileType != nullptr && fileType->extension == L".nfo";
 
     file_ = CreateFileW(
         path.c_str(),
@@ -240,6 +246,7 @@ void LargeTextDocument::Close() noexcept {
     originalUnitCount_ = 0;
     encoding_ = FileEncoding::Utf8;
     encodingLabel_ = L"UTF-8/ANSI";
+    preferOem437_ = false;
     lineEnding_ = LineEnding::CrLf;
     pieces_.clear();
     addBytes_.clear();
@@ -273,6 +280,8 @@ TextEncoding LargeTextDocument::Encoding() const noexcept {
         return TextEncoding::Utf8Bom;
     case FileEncoding::Ansi:
         return TextEncoding::Ansi;
+    case FileEncoding::Oem437:
+        return TextEncoding::Oem437;
     case FileEncoding::Utf16Le:
         return TextEncoding::Utf16Le;
     case FileEncoding::Utf16Be:
@@ -360,6 +369,13 @@ void LargeTextDocument::DetectEncoding() {
     }
 
     const std::size_t contentBytes = static_cast<std::size_t>(fileByteCount_) - dataOffset_;
+    if (dataOffset_ == 0 && preferOem437_) {
+        const std::string_view content(reinterpret_cast<const char*>(data_), contentBytes);
+        if (LooksLikeOem437(content) || !IsValidUtf8(content)) {
+            encoding_ = FileEncoding::Oem437;
+            encodingLabel_ = L"OEM 437";
+        }
+    }
     originalUnitCount_ = IsUtf16() ? contentBytes / sizeof(wchar_t) : contentBytes;
 }
 
@@ -513,6 +529,9 @@ std::wstring LargeTextDocument::DecodeUnits(Source source, std::size_t start, st
 
     const unsigned char* bytes =
         source == Source::Original ? data_ + dataOffset_ + start : addBytes_.data() + start;
+    if (encoding_ == FileEncoding::Oem437) {
+        return DecodeBytes(437, bytes, length);
+    }
     if (encoding_ != FileEncoding::Ansi) {
         std::wstring text = DecodeBytes(CP_UTF8, bytes, length);
         if (!text.empty()) {
@@ -556,13 +575,15 @@ std::optional<LargeTextDocument::Match> LargeTextDocument::Find(
         return std::nullopt;
     }
 
-    // Compare in the document's unit space: bytes for UTF-8/ANSI, wchars for
+    // Compare in the document's unit space: bytes for UTF-8/ANSI/OEM 437, wchars for
     // UTF-16. Encode the needle into the same space first.
     std::vector<wchar_t> needleUnits;
     if (IsUtf16()) {
         needleUnits.assign(needle.begin(), needle.end());
     } else {
-        const UINT codePage = encoding_ == FileEncoding::Ansi ? CP_ACP : CP_UTF8;
+        const UINT codePage = encoding_ == FileEncoding::Ansi
+                                  ? CP_ACP
+                                  : (encoding_ == FileEncoding::Oem437 ? 437 : CP_UTF8);
         auto bytes = EncodeBytes(codePage, needle);
         if (!bytes || bytes->empty()) {
             return std::nullopt;
@@ -640,7 +661,9 @@ void LargeTextDocument::AppendToAddBuffer(
         return;
     }
 
-    const UINT codePage = encoding_ == FileEncoding::Ansi ? CP_ACP : CP_UTF8;
+    const UINT codePage = encoding_ == FileEncoding::Ansi
+                              ? CP_ACP
+                              : (encoding_ == FileEncoding::Oem437 ? 437 : CP_UTF8);
     auto bytes = EncodeBytes(codePage, text);
     addStart = addBytes_.size();
     if (bytes) {

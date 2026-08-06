@@ -108,6 +108,8 @@
     <ClCompile Include="src\Printing.cpp" />
     <ClCompile Include="src\RecoveryJournal.cpp" />
     <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\SyntaxHighlighter.cpp" />
+    <ClCompile Include="src\TextFileTypes.cpp" />
     <ClCompile Include="src\TextFormat.cpp" />
     <ClCompile Include="src\UpdateChecker.cpp" />
     <ClCompile Include="src\UiSupport.cpp" />
@@ -144,6 +146,8 @@
     <ClInclude Include="src\RecoveryJournal.h" />
     <ClInclude Include="src\resource.h" />
     <ClInclude Include="src\Settings.h" />
+    <ClInclude Include="src\SyntaxHighlighter.h" />
+    <ClInclude Include="src\TextFileTypes.h" />
     <ClInclude Include="src\TextFormat.h" />
     <ClInclude Include="src\UpdateChecker.h" />
     <ClInclude Include="src\UiSupport.h" />

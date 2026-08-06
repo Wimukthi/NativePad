@@ -11,6 +11,20 @@ incremented automatically and does not by itself imply a release.
 
 Nothing yet.
 
+## [1.1.0.4] - 2026-08-07
+
+### Added
+
+- Shared plain-text file-type catalog used by the Open/Save dialogs, Windows
+  per-user Open With registration, and extension-based editor behavior.
+- Lightweight line-local syntax highlighting for JSON, INI/configuration,
+  Markdown, and XML documents. Large-file backends remain on the fast plain
+  text renderer.
+- Proper `.nfo` support, including catalogued file associations and OEM 437
+  decoding/saving for legacy DOS artwork.
+- Release packaging now verifies and uses a pinned UPX build to reduce the
+  distributed executable size.
+
 ## [1.1.0.3] - 2026-07-29
 
 ### Changed

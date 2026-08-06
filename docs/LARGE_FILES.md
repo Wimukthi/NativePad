@@ -16,7 +16,8 @@ it the file is memory-mapped and read-only, with editing available on request.
 
 1. Open the file with Win32 file APIs.
 2. Read or map the bytes.
-3. Detect UTF-8 BOM, UTF-16 LE, UTF-16 BE, UTF-8, or ANSI fallback.
+3. Detect UTF-8 BOM, UTF-16 LE, UTF-16 BE, UTF-8, ANSI fallback, or OEM 437
+   for legacy `.nfo` artwork.
 4. Decode to UTF-16.
 5. Store the text in `DocumentBuffer`.
 6. Build a `LineIndex` for navigation and scrolling.
@@ -28,7 +29,8 @@ This path supports everything: editing, undo/redo, replace, save, and print.
 1. Check the file size before any decoding.
 2. Open through `MappedTextDocument`.
 3. Map with `CreateFileMappingW` and `MapViewOfFile`.
-4. Detect BOM-based encoding.
+4. Detect BOM-based encoding, with the same OEM 437 `.nfo` heuristic used by
+   the editable path.
 5. Build a line-start table by scanning the mapped bytes.
 6. Serve visible ranges to `EditorView` on demand.
 
@@ -88,7 +90,7 @@ The status bar shows `LARGE FILE` in this mode.
 | --- | --- |
 | Editable documents | UTF-16 code units |
 | Mapped UTF-16 files | UTF-16 code units |
-| Mapped UTF-8 / ANSI files | Bytes |
+| Mapped UTF-8 / ANSI / OEM 437 files | Bytes |
 | Editable large files | Bytes |
 
 Byte offsets are a deliberate trade. They are exact for the ASCII-heavy logs

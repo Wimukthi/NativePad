@@ -39,6 +39,12 @@ std::wstring TempFilePath() {
     return tempFile;
 }
 
+std::wstring TempFilePathWithExtension(std::wstring_view extension) {
+    const std::wstring base = TempFilePath();
+    DeleteFileW(base.c_str());
+    return base + std::wstring(extension);
+}
+
 void WriteBytes(const std::wstring& path, const void* data, std::size_t byteCount) {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
@@ -140,7 +146,7 @@ void ExpectRefreshStatus(
 }
 
 void RunUtf8MappedDocumentTest() {
-    // The mapped backend uses byte offsets for UTF-8/ANSI files; this verifies
+    // The mapped backend uses byte offsets for UTF-8/ANSI/OEM 437 files; this verifies
     // line starts, range decoding, and search positions all use that convention.
     const std::string bytes = "alpha\r\nbeta line\r\ngamma";
     const std::wstring path = TempFilePath();
@@ -209,6 +215,37 @@ void RunUtf16MappedDocumentTest() {
         throw std::runtime_error("mapped utf16 find backward case-insensitive");
     }
     ExpectEqualSize(match->position, 5, "mapped utf16 backward find position");
+
+    document.Close();
+    DeleteFileW(path.c_str());
+}
+
+void RunOem437NfoMappedDocumentTest() {
+    const unsigned char bytes[] = {0xC4, 0xB3, '\r', '\n', 'N', 'F', 'O'};
+    const std::wstring path = TempFilePathWithExtension(L".nfo");
+    WriteBytes(path, bytes, sizeof(bytes));
+
+    NativePad::MappedTextDocument document;
+    std::wstring error;
+    if (!document.Open(path, error)) {
+        DeleteFileW(path.c_str());
+        throw std::runtime_error("open OEM 437 NFO mapped document");
+    }
+
+    try {
+        ExpectEqualText(document.TextRange(0, 2), L"\u2500\u2502", "mapped NFO box drawing");
+        if (document.EncodingLabel() != L"OEM 437") {
+            throw std::runtime_error("mapped NFO encoding label");
+        }
+        const auto match = document.Find(L"\u2502", 0, true, true);
+        if (!match || match->position != 1) {
+            throw std::runtime_error("mapped NFO search");
+        }
+    } catch (...) {
+        document.Close();
+        DeleteFileW(path.c_str());
+        throw;
+    }
 
     document.Close();
     DeleteFileW(path.c_str());
@@ -313,6 +350,7 @@ void RunUtf16RefreshTest() {
 void RunMappedTextDocumentTests() {
     RunUtf8MappedDocumentTest();
     RunUtf16MappedDocumentTest();
+    RunOem437NfoMappedDocumentTest();
     RunUtf8RefreshTest();
     RunUtf16RefreshTest();
     std::cout << "MappedTextDocument tests passed\n";

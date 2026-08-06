@@ -90,6 +90,8 @@ MappedTextDocument tests passed
 LargeTextDocument tests passed
 RecoveryJournal tests passed
 TextFormat tests passed
+SyntaxHighlighter tests passed
+TextFileTypes tests passed
 ```
 
 Any failure prints the failing assertion to stderr and aborts with a non-zero
@@ -104,7 +106,9 @@ exit code.
 | `MappedTextDocument` | UTF-8/byte-backed and UTF-16 line starts, range decoding, find, and refresh — appended content extends the index across the old mapping boundary, in-place rewrites report as replaced |
 | `LargeTextDocument` | Piece-table-over-mmap insert/erase/find across UTF-8 and UTF-16 originals, erase snapping to UTF-8 code-point boundaries, line/offset queries, and save round-trips that preserve a BOM |
 | `RecoveryJournal` | Journals from dead processes are claimed with exact text and metadata, journals from live processes are left alone, and clearing removes every journal file |
-| `TextFormat` | Encoding labels, line-ending detection and normalization, and save-encoding byte output |
+| `TextFormat` | Encoding labels, UTF-8 validation, OEM 437 heuristics, line-ending detection and normalization, and save-encoding byte output |
+| `SyntaxHighlighter` | Line-local JSON, INI, Markdown, and XML token spans |
+| `TextFileTypes` | Extension lookup, dialog patterns, and default-extension selection |
 
 ### What still needs a human
 
@@ -136,6 +140,14 @@ workflow and the toolset declared in the projects aligned.
 workflow. It builds Release x64, runs the Release tests, produces
 `NativePad-<version>-win-x64.zip`, builds the Inno Setup installer
 `NativePadSetup-<version>-win-x64.exe`, and uploads both as workflow artifacts.
+After the tests pass, it downloads the pinned official UPX x64 build,
+verifies its SHA-256, packs `NativePad.exe` with `--best --lzma`, and runs
+UPX's integrity test before either package is assembled. Packing must remain
+before any future code-signing step because modifying the executable would
+invalidate a signature.
+The workflow's `pack_with_upx` dispatch input defaults to `true`; set it to
+`false` for a diagnostic or emergency uncompressed package if a security tool
+flags the packed binary.
 
 It builds with `AutoIncrementVersion=false`, so the released version is exactly
 the value already committed in `src/NativePad.rc` — supply that version as the

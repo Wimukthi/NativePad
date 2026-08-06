@@ -41,12 +41,12 @@ adds only what a text editor genuinely needs.
 | --- | --- |
 | Editing | Undo/redo, cut/copy/paste, word/line selection, duplicate line, delete line, move line up/down |
 | Search | Find, Find Next/Previous, Replace, Replace All, Go To Line — all with wrap-around and match case |
-| Files | UTF-8, UTF-8 BOM, UTF-16 LE/BE and ANSI detection; encoding and line endings preserved on save; Save As can change encoding |
+| Files | UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI detection; `.nfo` files also support OEM 437; encoding and line endings preserved on save; Save As can change encoding; common text/data extensions are registered together |
 | Large files | Read-only memory-mapped viewing above 512 MB, with opt-in editing through a piece table over the mapping |
 | Live logs | Follow Tail (F6) keeps up with a growing file; external edits prompt for reload |
-| View | Word wrap, line numbers, status bar, zoom 10–500%, dark mode override |
+| View | Word wrap, line numbers, status bar, zoom 10–500%, dark mode override, basic JSON/INI/Markdown/XML highlighting |
 | Printing | Native Page Setup and Print dialogs; pagination and spooling on a worker thread |
-| System | Recent files, per-user `.txt` association, optional update check against GitHub releases |
+| System | Recent files, per-user plain-text associations (`.txt`, `.log`, `.ini`, `.cfg`, `.conf`, `.md`, `.json`, `.xml`, `.nfo`, and common data files), optional update check against GitHub releases |
 
 Full detail: [Feature Matrix](docs/FEATURE_MATRIX.md) ·
 [Classic Notepad Parity](docs/CLASSIC_NOTEPAD_PARITY.md)
@@ -65,7 +65,7 @@ Download the latest build from the
 Requires 64-bit Windows 10 or later. Releases are currently unsigned, so
 SmartScreen may warn on first run.
 
-To make NativePad your default text editor, use **Help > Set as Default
+To make NativePad your default text editor, use **Help > Set as Default Text
 Editor**, then confirm the change in the Windows Default Apps page that opens.
 
 ## Screenshots

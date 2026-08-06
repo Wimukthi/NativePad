@@ -14,6 +14,8 @@ Work top to bottom. Anything that fails blocks the release.
       still agree after the build.
 - [ ] Release x64 builds clean, with no warnings.
 - [ ] `bin\x64\Release\NativePad.Tests.exe` passes, exit code `0`.
+- [ ] The release package's `NativePad.exe` passes `upx --test` after packing;
+      code signing, if added, happens after UPX.
 - [ ] GitHub Actions `CI` is green on `main`.
 - [ ] The About dialog shows the expected version, build timestamp, author, and
       GPL V3 licence.
@@ -24,8 +26,12 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] New prompts to save a modified document.
 - [ ] Open works from the File menu, `Ctrl+O`, drag-and-drop, and a
       command-line path.
+- [ ] Open/Save filters include the supported plain-text/data extensions, and
+      JSON, INI, Markdown, and XML files receive readable highlighting.
+- [ ] A CP437 `.nfo` file preserves box-drawing characters on open, search, and
+      save; UTF-8 and UTF-16 NFO files remain readable.
 - [ ] Save preserves the detected encoding and line endings.
-- [ ] Save As writes UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, and ANSI.
+- [ ] Save As writes UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, ANSI, and OEM 437 (NFO).
 - [ ] An ANSI Save As of unrepresentable text is refused without truncating the
       target file.
 - [ ] Exit prompts on a modified document and exits cleanly after Save, Don't

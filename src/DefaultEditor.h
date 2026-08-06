@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <string>
+#include <string_view>
 
 // Default-editor registration. Windows does not let an application silently
 // force itself as the default handler for a file type (the per-extension choice
@@ -13,12 +14,14 @@
 
 namespace NativePad {
 
-// Registers NativePad as a per-user handler for .txt and opens the Windows
-// "Default apps" UI for confirmation. Returns false (with error) only when the
-// registration itself fails; opening the Settings UI is best-effort.
+// Registers NativePad as a per-user handler for the supported plain-text types
+// and opens the Windows "Default apps" UI for confirmation. Returns false (with
+// error) only when the registration itself fails; opening Settings is best-effort.
 bool PromptSetDefaultEditor(HWND owner, HINSTANCE instance, std::wstring& error);
 
-// True when NativePad is the current effective default handler for .txt.
+// True when NativePad is the current effective default handler for .txt. This
+// legacy helper remains for the Help-menu check mark.
 [[nodiscard]] bool IsDefaultEditor();
+[[nodiscard]] bool IsDefaultEditorForExtension(std::wstring_view extension);
 
 } // namespace NativePad

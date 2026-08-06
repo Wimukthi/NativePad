@@ -89,7 +89,7 @@ Walk this list when validating a release:
 - **Format:** Word Wrap, Font.
 - **View:** Zoom In/Out/Restore, Line Numbers, Status Bar, Dark Mode, Follow
   Tail.
-- **Help:** Set as Default Editor, About.
+- **Help:** Set as Default Text Editor, About.
 - **Behavior:** dirty prompts, command-line open, drag-and-drop open, dark and
   light mode, read-only mapped viewing, encoding load/save and Save As encoding
   changes, mouse selection, line/column status, keyboard shortcuts.

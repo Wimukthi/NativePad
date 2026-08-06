@@ -210,7 +210,7 @@ std::optional<JournalMeta> ReadMetaFile(const std::wstring& path) {
             meta.processId = static_cast<DWORD>(wcstoul(value.c_str(), nullptr, 10));
         } else if (key == L"encoding") {
             const long parsed = wcstol(value.c_str(), nullptr, 10);
-            if (parsed >= static_cast<long>(TextEncoding::Utf8) && parsed <= static_cast<long>(TextEncoding::Ansi)) {
+            if (parsed >= static_cast<long>(TextEncoding::Utf8) && parsed <= static_cast<long>(TextEncoding::Oem437)) {
                 meta.encoding = static_cast<TextEncoding>(parsed);
             }
         } else if (key == L"lineEnding") {

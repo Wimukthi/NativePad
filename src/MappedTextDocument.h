@@ -60,12 +60,13 @@ public:
     [[nodiscard]] std::optional<Match> Find(std::wstring_view needle, std::size_t start, bool down, bool matchCase) const;
 
 private:
-    // UTF-16 files use wchar offsets. UTF-8/ANSI files use byte offsets as the
-    // editor coordinate, which is fast and exact for ASCII/log-style large files.
+    // UTF-16 files use wchar offsets. UTF-8/ANSI/OEM 437 files use byte offsets
+    // as the editor coordinate, which is fast and exact for ASCII/art files.
     enum class Encoding {
         Utf8,
         Utf8Bom,
         Ansi,
+        Oem437,
         Utf16Le,
         Utf16Be,
     };
@@ -91,6 +92,7 @@ private:
     std::size_t maxLineLength_{0};
     Encoding encoding_{Encoding::Utf8};
     std::wstring encodingLabel_{L"UTF-8/ANSI"};
+    bool preferOem437_{false};
     std::vector<std::size_t> lineStarts_{0};
 };
 

@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -41,6 +42,12 @@ std::wstring TempFilePath() {
         throw std::runtime_error("GetTempFileNameW");
     }
     return tempFile;
+}
+
+std::wstring TempFilePathWithExtension(std::wstring_view extension) {
+    const std::wstring base = TempFilePath();
+    DeleteFileW(base.c_str());
+    return base + std::wstring(extension);
 }
 
 void WriteBytes(const std::wstring& path, const void* data, std::size_t byteCount) {
@@ -167,6 +174,41 @@ void RunUtf8MultibyteSnapTest() {
     DeleteFileW(path.c_str());
 }
 
+void RunOem437NfoRoundTripTest() {
+    const unsigned char raw[] = {0xC4, 0xB3, '\r', '\n', 'N', 'F', 'O'};
+    const std::wstring path = TempFilePathWithExtension(L".nfo");
+    WriteBytes(path, raw, sizeof(raw));
+
+    NativePad::LargeTextDocument doc;
+    std::wstring error;
+    if (!doc.Open(path, error)) {
+        DeleteFileW(path.c_str());
+        throw std::runtime_error("open OEM 437 NFO large document");
+    }
+
+    const std::wstring outPath = TempFilePath();
+    try {
+        ExpectText(doc.TextRange(0, 2), L"\u2500\u2502", "large NFO box drawing");
+        ExpectTrue(doc.Encoding() == NativePad::TextEncoding::Oem437, "large NFO encoding");
+        doc.Replace(doc.Length(), 0, L"\u2500");
+        if (!doc.SaveTo(outPath, error)) {
+            throw std::runtime_error("save OEM 437 NFO");
+        }
+
+        const std::vector<unsigned char> expected = {0xC4, 0xB3, '\r', '\n', 'N', 'F', 'O', 0xC4};
+        ExpectTrue(ReadBytes(outPath) == expected, "large NFO OEM round trip");
+    } catch (...) {
+        doc.Close();
+        DeleteFileW(path.c_str());
+        DeleteFileW(outPath.c_str());
+        throw;
+    }
+
+    doc.Close();
+    DeleteFileW(path.c_str());
+    DeleteFileW(outPath.c_str());
+}
+
 void RunUtf16EditTest() {
     const std::wstring content = L"one\r\ntwo";
     std::vector<unsigned char> bytes;
@@ -291,6 +333,7 @@ void RunUtf8BomSavePreservesBomTest() {
 void RunLargeTextDocumentTests() {
     RunUtf8EditTest();
     RunUtf8MultibyteSnapTest();
+    RunOem437NfoRoundTripTest();
     RunUtf16EditTest();
     RunSaveRoundTripTest();
     RunUtf8BomSavePreservesBomTest();

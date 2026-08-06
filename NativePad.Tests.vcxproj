@@ -82,13 +82,17 @@
     <ClCompile Include="src\LineIndex.cpp" />
     <ClCompile Include="src\MappedTextDocument.cpp" />
     <ClCompile Include="src\RecoveryJournal.cpp" />
+    <ClCompile Include="src\SyntaxHighlighter.cpp" />
+    <ClCompile Include="src\TextFileTypes.cpp" />
     <ClCompile Include="src\TextFormat.cpp" />
     <ClCompile Include="tests\DocumentBufferTests.cpp" />
     <ClCompile Include="tests\LargeTextDocumentTests.cpp" />
     <ClCompile Include="tests\LineIndexTests.cpp" />
     <ClCompile Include="tests\MappedTextDocumentTests.cpp" />
     <ClCompile Include="tests\RecoveryJournalTests.cpp" />
+    <ClCompile Include="tests\SyntaxHighlighterTests.cpp" />
     <ClCompile Include="tests\TextFormatTests.cpp" />
+    <ClCompile Include="tests\TextFileTypesTests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\DocumentBuffer.h" />
@@ -96,7 +100,9 @@
     <ClInclude Include="src\LineIndex.h" />
     <ClInclude Include="src\MappedTextDocument.h" />
     <ClInclude Include="src\RecoveryJournal.h" />
+    <ClInclude Include="src\SyntaxHighlighter.h" />
     <ClInclude Include="src\TextFormat.h" />
+    <ClInclude Include="src\TextFileTypes.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <d2d1.h>
 
 #include <cstddef>
 #include <string>
@@ -9,6 +10,7 @@
 
 #include "DocumentBuffer.h"
 #include "LineIndex.h"
+#include "SyntaxHighlighter.h"
 
 namespace NativePad {
 
@@ -27,6 +29,14 @@ struct EditorTheme {
     COLORREF lineNumberBackground{};
     COLORREF lineNumberText{};
     COLORREF lineNumberSeparator{};
+};
+
+struct EditorSyntaxTheme {
+    COLORREF keyword{};
+    COLORREF string{};
+    COLORREF number{};
+    COLORREF comment{};
+    COLORREF punctuation{};
 };
 
 struct EditorFontSpec {
@@ -53,6 +63,9 @@ public:
     void RefreshDocumentMetrics();
     void MoveCaretToDocumentEnd();
     void SetTheme(EditorTheme theme);
+    void SetSyntaxTheme(EditorSyntaxTheme theme);
+    void SetSyntaxLanguage(SyntaxLanguage language);
+    [[nodiscard]] SyntaxLanguage SyntaxLanguageForDocument() const noexcept;
     void SetFont(EditorFontSpec font);
     [[nodiscard]] const EditorFontSpec& Font() const noexcept;
     void SetZoomPercent(int percent);
@@ -200,6 +213,7 @@ private:
     float PixelsToDips(int pixels) const noexcept;
     float ClientWidthDips() const;
     float ClientHeightDips() const;
+    [[nodiscard]] ID2D1SolidColorBrush* SyntaxBrush(SyntaxColor color) const noexcept;
 
     HWND hwnd_{};
     HWND parent_{};
@@ -208,7 +222,10 @@ private:
     MappedTextDocument* mappedDocument_{};
     LargeTextDocument* largeDocument_{};
     EditorTheme theme_{};
+    EditorSyntaxTheme syntaxTheme_{};
     EditorFontSpec font_{};
+    SyntaxLanguage syntaxLanguage_{SyntaxLanguage::PlainText};
+    SyntaxHighlighter syntaxHighlighter_{};
 
     struct Impl;
     Impl* impl_{};

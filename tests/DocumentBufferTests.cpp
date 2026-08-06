@@ -32,6 +32,8 @@ int main() {
     void RunRecoveryJournalTests();
     void RunMappedTextDocumentTests();
     void RunTextFormatTests();
+    void RunSyntaxHighlighterTests();
+    void RunTextFileTypesTests();
 
     using NativePad::DocumentBuffer;
 
@@ -102,5 +104,7 @@ int main() {
     RunLargeTextDocumentTests();
     RunRecoveryJournalTests();
     RunTextFormatTests();
+    RunSyntaxHighlighterTests();
+    RunTextFileTypesTests();
     return 0;
 }

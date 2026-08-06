@@ -42,6 +42,7 @@
 #include "TextFormat.h"
 #include "UpdateChecker.h"
 #include "UiSupport.h"
+#include "TextFileTypes.h"
 
 using namespace NativePad;
 
@@ -1676,7 +1677,7 @@ private:
         case ID_HELP_AUTO_UPDATE:
             return L"Check &Automatically";
         case ID_HELP_DEFAULT_EDITOR:
-            return L"Set as &Default Editor...";
+            return L"Set as &Default Text Editor...";
         case ID_HELP_ABOUT:
             return L"&About NativePad";
         default:
@@ -2500,6 +2501,34 @@ private:
             colors.editorLineNumberSeparator,
         });
 
+        // Syntax colors are kept separate from the editor chrome so the
+        // highlighter remains readable in both palettes and in high contrast.
+        if (IsHighContrastMode()) {
+            editorView_.SetSyntaxTheme({
+                colors.editorText,
+                colors.editorText,
+                colors.editorText,
+                colors.editorText,
+                colors.editorText,
+            });
+        } else if (effectiveDarkMode_) {
+            editorView_.SetSyntaxTheme({
+                RGB(86, 156, 214),
+                RGB(206, 145, 120),
+                RGB(181, 206, 168),
+                RGB(106, 153, 85),
+                RGB(180, 180, 180),
+            });
+        } else {
+            editorView_.SetSyntaxTheme({
+                RGB(0, 0, 180),
+                RGB(163, 21, 21),
+                RGB(9, 134, 88),
+                RGB(0, 128, 0),
+                RGB(128, 128, 128),
+            });
+        }
+
         ApplyMenuBackground();
         InvalidateRect(menuStrip_, nullptr, TRUE);
         InvalidateRect(editor_, nullptr, TRUE);
@@ -2617,6 +2646,11 @@ private:
         readOnlyPreview_ = readOnlyPreview;
         editorView_.SetDocument(&document_);
         editorView_.SetReadOnly(readOnlyPreview_);
+    }
+
+    void SetSyntaxLanguageForPath(std::wstring_view path) {
+        const TextFileType* type = TextFileTypeForPath(path);
+        editorView_.SetSyntaxLanguage(type != nullptr ? type->syntax : SyntaxLanguage::PlainText);
     }
 
     void SetMappedEditorDocument(std::unique_ptr<NativePad::MappedTextDocument> document) {
@@ -2746,6 +2780,7 @@ private:
         fileByteCount_ = 0;
         previewDecodedByteCount_ = 0;
         SetEditorText(L"");
+        editorView_.SetSyntaxLanguage(SyntaxLanguage::PlainText);
         dirty_ = false;
         UpdateTitle();
         UpdateStatus();
@@ -2789,6 +2824,7 @@ private:
             documentLineEnding_ = NativePad::LineEnding::CrLf;
             fileByteCount_ = mapped->FileByteCount();
             SetMappedEditorDocument(std::move(mapped));
+            editorView_.SetSyntaxLanguage(SyntaxLanguage::PlainText);
             dirty_ = false;
             CancelRecoveryJournal();
             RecordFileStamp();
@@ -2813,6 +2849,7 @@ private:
         fileByteCount_ = file->fileByteCount;
         previewDecodedByteCount_ = file->decodedByteCount;
         SetEditorText(file->text, file->readOnlyPreview);
+        SetSyntaxLanguageForPath(currentPath_);
         dirty_ = false;
         CancelRecoveryJournal();
         RecordFileStamp();
@@ -2894,6 +2931,7 @@ private:
         fileByteCount_ = 0;
         previewDecodedByteCount_ = 0;
         SetEditorText(snapshot->text);
+        SetSyntaxLanguageForPath(currentPath_);
         dirty_ = true;
         RecordFileStamp();
         UpdateTitle();
@@ -3114,6 +3152,7 @@ private:
             StopFollowTail();
         }
         currentPath_ = path;
+        SetSyntaxLanguageForPath(currentPath_);
         documentEncoding_ = targetEncoding;
         encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
         dirty_ = false;
@@ -3205,6 +3244,7 @@ private:
         documentEncoding_ = largeDocument_->Encoding();
         documentLineEnding_ = largeDocument_->DetectedLineEnding();
         fileByteCount_ = largeDocument_->FileByteCount();
+        editorView_.SetSyntaxLanguage(SyntaxLanguage::PlainText);
         // The backend object is unchanged, but the view must rebuild against the
         // freshly reopened content.
         editorView_.SetLargeDocument(largeDocument_.get());

@@ -70,6 +70,16 @@ void RunTextFormatTests() {
     }
     ExpectBytes(*ansi, {'A', 'B', 'C'}, "ANSI encode");
 
+    auto oem437 = NativePad::EncodeTextBytes(L"\u2500\u2502\n", TextEncoding::Oem437, LineEnding::CrLf, error);
+    if (!oem437) {
+        throw std::runtime_error("OEM 437 encode failed");
+    }
+    ExpectBytes(*oem437, {0xC4, 0xB3, '\r', '\n'}, "OEM 437 box drawing encode");
+    ExpectWide(NativePad::EncodingLabel(TextEncoding::Oem437), L"OEM 437", "OEM 437 label");
+    if (!NativePad::LooksLikeOem437(std::string("\xC4\xB3", 2)) || !NativePad::IsValidUtf8(std::string("\xC4\xB3", 2))) {
+        throw std::runtime_error("OEM 437 detection heuristic");
+    }
+
     error.clear();
     auto unsupportedAnsi = NativePad::EncodeTextBytes(L"\U0001F600", TextEncoding::Ansi, LineEnding::CrLf, error);
     if (unsupportedAnsi) {

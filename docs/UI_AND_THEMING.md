@@ -98,7 +98,10 @@ or a menu command leaves that mode.
 
 The editor is a child HWND registered by `EditorView`, rendered with a Direct2D
 render target and a DirectWrite text format, using theme-supplied background,
-text, selection, caret, and gutter colours.
+text, selection, caret, and gutter colours. Recognized JSON, INI, Markdown, and
+XML documents add a small set of theme-aware token brushes (keywords, strings,
+numbers, comments, and punctuation); High Contrast collapses those accents back
+to the system editor text colour.
 
 Line numbers are an optional gutter: visual only, right-aligned, DPI- and
 font-aware, and showing an arrow cursor rather than the text insertion cursor.

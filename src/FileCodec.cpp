@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "UiSupport.h"
+#include "TextFileTypes.h"
 
 namespace NativePad {
 
@@ -26,12 +27,13 @@ struct SaveEncodingOption {
     const wchar_t* label{};
 };
 
-constexpr std::array<SaveEncodingOption, 5> kSaveEncodingOptions{{
+constexpr std::array<SaveEncodingOption, 6> kSaveEncodingOptions{{
     {1, NativePad::TextEncoding::Utf8, L"UTF-8"},
     {2, NativePad::TextEncoding::Utf8Bom, L"UTF-8 with BOM"},
     {3, NativePad::TextEncoding::Utf16Le, L"UTF-16 LE"},
     {4, NativePad::TextEncoding::Utf16Be, L"UTF-16 BE"},
     {5, NativePad::TextEncoding::Ansi, L"ANSI"},
+    {6, NativePad::TextEncoding::Oem437, L"OEM 437 (NFO)"},
 }};
 
 const SaveEncodingOption& SaveEncodingOptionForEncoding(NativePad::TextEncoding encoding) noexcept {
@@ -118,7 +120,11 @@ std::optional<std::wstring> DecodeUtf8BestEffort(const char* bytes, size_t size)
     return std::nullopt;
 }
 
-DecodedFile DecodeBytes(const char* bytes, size_t size, bool allowTruncatedUtf8 = false) {
+DecodedFile DecodeBytes(
+    const char* bytes,
+    size_t size,
+    bool allowTruncatedUtf8 = false,
+    bool preferOem437 = false) {
     // Small/editable files are decoded completely into UTF-16 for the piece table.
     // Large files bypass this path and use MappedTextDocument instead.
     if (size >= 2) {
@@ -151,6 +157,13 @@ DecodedFile DecodeBytes(const char* bytes, size_t size, bool allowTruncatedUtf8 
         }
     }
 
+    const std::string_view rawBytes = size > 0 ? std::string_view(bytes, size) : std::string_view();
+    if (preferOem437 && NativePad::LooksLikeOem437(rawBytes)) {
+        if (auto text = MultiByteToWide(437, bytes, static_cast<int>(size), 0)) {
+            return MakeDecodedFile(*text, NativePad::TextEncoding::Oem437, size);
+        }
+    }
+
     if (auto text = MultiByteToWide(CP_UTF8, bytes, static_cast<int>(size), MB_ERR_INVALID_CHARS)) {
         return MakeDecodedFile(*text, NativePad::TextEncoding::Utf8, size);
     }
@@ -161,6 +174,12 @@ DecodedFile DecodeBytes(const char* bytes, size_t size, bool allowTruncatedUtf8 
         }
     }
 
+    if (preferOem437) {
+        if (auto text = MultiByteToWide(437, bytes, static_cast<int>(size), 0)) {
+            return MakeDecodedFile(*text, NativePad::TextEncoding::Oem437, size);
+        }
+    }
+
     if (auto text = MultiByteToWide(CP_ACP, bytes, static_cast<int>(size), 0)) {
         return MakeDecodedFile(*text, NativePad::TextEncoding::Ansi, size);
     }
@@ -168,7 +187,11 @@ DecodedFile DecodeBytes(const char* bytes, size_t size, bool allowTruncatedUtf8 
     return MakeDecodedFile(L"", NativePad::TextEncoding::Utf8, size);
 }
 
-std::optional<DecodedFile> ReadTextFileWithReadFile(HANDLE file, size_t byteCount, std::wstring& error) {
+std::optional<DecodedFile> ReadTextFileWithReadFile(
+    HANDLE file,
+    size_t byteCount,
+    std::wstring& error,
+    bool preferOem437) {
     std::vector<char> bytes(byteCount);
     char* cursor = bytes.data();
     size_t remaining = bytes.size();
@@ -189,10 +212,14 @@ std::optional<DecodedFile> ReadTextFileWithReadFile(HANDLE file, size_t byteCoun
         remaining -= read;
     }
 
-    return DecodeBytes(bytes.data(), bytes.size());
+    return DecodeBytes(bytes.data(), bytes.size(), false, preferOem437);
 }
 
-std::optional<DecodedFile> ReadLargeFilePreview(HANDLE file, uint64_t fileByteCount, std::wstring& error) {
+std::optional<DecodedFile> ReadLargeFilePreview(
+    HANDLE file,
+    uint64_t fileByteCount,
+    std::wstring& error,
+    bool preferOem437) {
     const size_t previewBytes = static_cast<size_t>(std::min<uint64_t>(fileByteCount, kLargeFilePreviewBytes));
     std::vector<char> bytes(previewBytes);
     char* cursor = bytes.data();
@@ -214,7 +241,7 @@ std::optional<DecodedFile> ReadLargeFilePreview(HANDLE file, uint64_t fileByteCo
         remaining -= read;
     }
 
-    DecodedFile decoded = DecodeBytes(bytes.data(), bytes.size(), true);
+    DecodedFile decoded = DecodeBytes(bytes.data(), bytes.size(), true, preferOem437);
     decoded.fileByteCount = fileByteCount;
     decoded.decodedByteCount = bytes.size();
     decoded.readOnlyPreview = true;
@@ -243,8 +270,10 @@ std::optional<SaveDialogResult> ShowLegacySaveDialog(
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
-    ofn.lpstrDefExt = L"txt";
+    const std::wstring filter = NativePad::PlainTextFileFilter();
+    const std::wstring defaultExtension = NativePad::DefaultExtensionForPath(currentPath);
+    ofn.lpstrFilter = filter.c_str();
+    ofn.lpstrDefExt = defaultExtension.c_str();
     ofn.lpstrFile = buffer.data();
     ofn.nMaxFile = static_cast<DWORD>(buffer.size());
     ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
@@ -300,8 +329,11 @@ std::optional<DecodedFile> ReadTextFile(const std::wstring& path, std::wstring& 
         return std::nullopt;
     }
 
+    const TextFileType* fileType = TextFileTypeForPath(path);
+    const bool preferOem437 = fileType != nullptr && fileType->extension == L".nfo";
+
     if (size.QuadPart > kReadChunkLimit) {
-        auto preview = ReadLargeFilePreview(file, static_cast<uint64_t>(size.QuadPart), error);
+        auto preview = ReadLargeFilePreview(file, static_cast<uint64_t>(size.QuadPart), error, preferOem437);
         CloseHandle(file);
         return preview;
     }
@@ -317,7 +349,7 @@ std::optional<DecodedFile> ReadTextFile(const std::wstring& path, std::wstring& 
 
     HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
     if (mapping == nullptr) {
-        auto fallback = ReadTextFileWithReadFile(file, byteCount, error);
+        auto fallback = ReadTextFileWithReadFile(file, byteCount, error, preferOem437);
         CloseHandle(file);
         return fallback;
     }
@@ -326,12 +358,12 @@ std::optional<DecodedFile> ReadTextFile(const std::wstring& path, std::wstring& 
     if (mapped == nullptr) {
         CloseHandle(mapping);
         SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-        auto fallback = ReadTextFileWithReadFile(file, byteCount, error);
+        auto fallback = ReadTextFileWithReadFile(file, byteCount, error, preferOem437);
         CloseHandle(file);
         return fallback;
     }
 
-    DecodedFile decoded = DecodeBytes(mapped, byteCount);
+    DecodedFile decoded = DecodeBytes(mapped, byteCount, false, preferOem437);
     decoded.fileByteCount = byteCount;
     decoded.decodedByteCount = byteCount;
     UnmapViewOfFile(mapped);
@@ -401,11 +433,12 @@ bool WriteTextFile(
 
 std::optional<std::wstring> ShowOpenDialog(HWND owner) {
     std::array<wchar_t, 32768> buffer{};
+    const std::wstring filter = NativePad::PlainTextFileFilter();
 
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = filter.c_str();
     ofn.lpstrFile = buffer.data();
     ofn.nMaxFile = static_cast<DWORD>(buffer.size());
     ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
@@ -434,13 +467,16 @@ std::optional<SaveDialogResult> ShowSaveDialog(
         dialog->SetOptions(options | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM);
     }
 
+    const std::wstring pattern = NativePad::PlainTextFilePattern();
+    const std::wstring description = L"Text and data files (" + pattern + L")";
     COMDLG_FILTERSPEC filters[] = {
-        {L"Text Documents (*.txt)", L"*.txt"},
+        {description.c_str(), pattern.c_str()},
         {L"All Files (*.*)", L"*.*"},
     };
     dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
     dialog->SetFileTypeIndex(1);
-    dialog->SetDefaultExtension(L"txt");
+    const std::wstring defaultExtension = NativePad::DefaultExtensionForPath(currentPath);
+    dialog->SetDefaultExtension(defaultExtension.c_str());
     dialog->SetTitle(L"Save As");
 
     if (!currentPath.empty()) {

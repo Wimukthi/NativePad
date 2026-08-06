@@ -17,7 +17,7 @@ NativePad.exe "C:\logs\server.log"
 | New | `Ctrl+N` | Prompts to save a modified document first |
 | Open | `Ctrl+O` | Also accepts drag-and-drop onto the window |
 | Save | `Ctrl+S` | Keeps the encoding and line endings detected on open |
-| Save As | `Ctrl+Shift+S` | Encoding picker: UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, ANSI |
+| Save As | `Ctrl+Shift+S` | Encoding picker: UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, ANSI, OEM 437 (NFO) |
 | Recent files | — | Up to eight entries, most recent first; missing files are dropped when opened |
 | Clear Recent Files | — | Empties the list |
 | Page Setup | — | Native dialog; margins persist between sessions |
@@ -64,13 +64,30 @@ NativePad.exe "C:\logs\server.log"
 
 | Command | Notes |
 | --- | --- |
-| Set as Default Editor | Registers NativePad as a per-user `.txt` handler, then opens Windows Default Apps so you can confirm. A check mark shows when NativePad is the current default |
+| Set as Default Text Editor | Registers NativePad as a per-user plain-text handler, then opens Windows Default Apps so you can confirm. A check mark shows when NativePad is the current `.txt` default |
 | About NativePad | Version, build timestamp, author, and licence — plus **Check for Updates** and the **Check automatically** toggle |
 
 Right-clicking the editor opens a context menu with Undo, Redo, Cut, Copy,
 Paste, Delete, Find, Replace, and Select All. `Alt` or `F10` reveals the
 menu-bar mnemonics and moves focus into menu navigation; `Esc` returns focus to
 the editor.
+
+## File Types and Highlighting
+
+Open and Save As dialogs group common text and data files together. NativePad
+registers the following per-user Open With associations when you choose **Help
+> Set as Default Text Editor**:
+
+`.txt`, `.log`, `.ini`, `.cfg`, `.conf`, `.csv`, `.tsv`, `.md`, `.json`, `.xml`,
+`.nfo`, `.yaml`, and `.yml`.
+
+Ordinary editable JSON, INI/configuration, Markdown, and XML files receive
+lightweight color highlighting based on their extension. NFO files are treated
+as plain text and legacy DOS NFO bytes are decoded as OEM code page 437 when
+the file contains CP437 artwork; UTF-8 and Unicode NFO files remain supported.
+The highlighting is deliberately line-local and does not change editing,
+searching, saving, or large-file behavior; unknown extensions and data formats
+remain plain text.
 
 ## Status Bar
 
@@ -93,10 +110,13 @@ Ln 1, Col 1    Lines 6400001    UTF-8/ANSI    READ-ONLY MAPPED    588 MB    6175
 
 On open NativePad detects UTF-8 with BOM, UTF-16 LE, UTF-16 BE, UTF-8 without
 BOM, and falls back to the system ANSI code page when UTF-8 decoding fails.
+Files with the `.nfo` extension additionally use OEM code page 437 when their
+bytes look like legacy DOS NFO artwork or are not valid UTF-8.
 
 **Save** writes the file back in the encoding it was opened with. **Save As**
-lets you choose a different one; saving as ANSI is refused rather than
-truncated if the text contains characters the ANSI code page cannot represent.
+lets you choose a different one, including **OEM 437 (NFO)**; saving as ANSI or
+OEM 437 is refused rather than truncated if the text contains characters that
+the selected code page cannot represent.
 
 Line endings work the same way. A file that was consistently CRLF, LF, or CR
 is normalized back to that style on save. A file that was already mixed is left

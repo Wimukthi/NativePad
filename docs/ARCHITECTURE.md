@@ -21,6 +21,8 @@ Contrast integration layer.
 | Editable large document | `LargeTextDocument.*` | Piece table over the memory-mapped original plus an in-memory add buffer |
 | File codec | `FileCodec.*` | Encoding detection, read/write, large-file preview, open/save pickers |
 | Text format helpers | `TextFormat.*` | Encoding labels, line-ending detection and normalization, save encoding |
+| Text file catalog | `TextFileTypes.*` | Canonical plain-text extensions, dialog filters, default extensions, and per-extension syntax-language selection |
+| Syntax highlighter | `SyntaxHighlighter.*` | Line-local JSON, INI, Markdown, and XML tokenization for visible editor rows |
 | Shared UI support | `UiSupport.*` | NativePad palettes, DPI scaling, owner-draw helpers |
 | Popup menus | `PopupMenu.*` | Owner-drawn menu and context-menu windows, plus the drop shadow |
 | Dialogs | `FontDialog.*`, `FindReplaceDialog.*`, `GoToDialog.*`, `AboutDialog.*`, `MessageDialog.*` | Custom theme-aware modal and modeless dialogs |
@@ -28,7 +30,7 @@ Contrast integration layer.
 | Settings | `Settings.*` | INI read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini` |
 | Crash recovery | `RecoveryJournal.*` | Journaling of unsaved documents and recovery of journals abandoned by a crashed process |
 | Update checker | `UpdateChecker.*` | GitHub release discovery, installer download, SHA-256 verification |
-| Default editor | `DefaultEditor.*` | Per-user `.txt` association and the Windows Default Apps hand-off |
+| Default editor | `DefaultEditor.*` | Per-user plain-text associations and the Windows Default Apps hand-off |
 | Resources | `NativePad.rc`, `resource.h`, `app.manifest` | Version metadata, command IDs, visual styles, DPI awareness |
 | Theme framework | sibling `Wimukthi.Win32Theme` | Process and per-window dark mode, native control theming, system-theme changes, High Contrast fallback |
 | Tests | `tests/*.cpp` | Dependency-free console test runner |
@@ -61,12 +63,15 @@ out of the shell.
 | Field | Backend | Coordinates | Editable |
 | --- | --- | --- | --- |
 | `document_` | `DocumentBuffer` | UTF-16 code units | Yes |
-| `mappedDocument_` | `MappedTextDocument` | UTF-16 code units, or bytes for UTF-8/ANSI | No |
+| `mappedDocument_` | `MappedTextDocument` | UTF-16 code units, or bytes for UTF-8/ANSI/OEM 437 | No |
 | `largeDocument_` | `LargeTextDocument` | Bytes | Yes |
 
 Ordinary files are decoded into UTF-16 and stored in `DocumentBuffer`, which
 supports editing, undo/redo, replace, save, and print. The open path records
-the detected encoding and line-ending policy so save can preserve both.
+the detected encoding and line-ending policy so save can preserve both. NFO
+paths use OEM code page 437 for legacy DOS artwork when the content is not
+valid UTF-8 (or contains strong CP437 box-drawing signals), and that encoding
+is carried through the editable and large-file backends for round-trip saves.
 
 Files above `kReadChunkLimit` (512 MB, in `FileCodec.h`) open through
 `MappedTextDocument`, which maps the file, builds a line-start table, and serves
@@ -90,6 +95,14 @@ split.
 
 The editor draws into a Direct2D render target and measures text with
 DirectWrite, painting only the visible rows.
+
+`TextFileTypes` maps a recognized extension to an optional `SyntaxLanguage`.
+`AppWindow` updates that language whenever a normal document is opened, saved,
+restored, or reset. `EditorView` keeps the highlighter line-local: it tokenizes
+only visible logical lines and applies DirectWrite drawing effects to those
+ranges. Plain text, mapped large files, and editable large files stay on the
+single-brush path, so the large-file backends do not acquire a whole-document
+parser or cache.
 
 The caret is custom-drawn and blinked on a timer using the system caret blink
 interval, because the editor does not use the Win32 caret APIs.

@@ -21,9 +21,9 @@ namespace NativePad {
 // with the number of edits rather than the file size.
 //
 // Coordinate space matches MappedTextDocument: UTF-16 files use wchar offsets,
-// while UTF-8/ANSI files use byte offsets. CharAt returns raw bytes for
-// UTF-8/ANSI so the editor can navigate and search in byte space; TextRange
-// decodes spans to UTF-16 for display.
+// while UTF-8/ANSI/OEM 437 files use byte offsets. CharAt returns raw bytes for
+// byte-backed files so the editor can navigate and search in byte space;
+// TextRange decodes spans to UTF-16 for display.
 class LargeTextDocument {
 public:
     struct Match {
@@ -85,6 +85,7 @@ private:
         Utf8,
         Utf8Bom,
         Ansi,
+        Oem437,
         Utf16Le,
         Utf16Be,
     };
@@ -128,11 +129,12 @@ private:
     std::size_t originalUnitCount_{0};
     FileEncoding encoding_{FileEncoding::Utf8};
     std::wstring encodingLabel_{L"UTF-8/ANSI"};
+    bool preferOem437_{false};
     LineEnding lineEnding_{LineEnding::CrLf};
 
     // Piece table state.
     std::vector<Piece> pieces_;
-    std::vector<unsigned char> addBytes_;   // UTF-8/ANSI inserted bytes
+    std::vector<unsigned char> addBytes_;   // UTF-8/ANSI/OEM 437 inserted bytes
     std::vector<wchar_t> addUnits_;          // UTF-16 inserted units
     std::vector<std::size_t> originalNewlines_;
     std::vector<std::size_t> addNewlines_;

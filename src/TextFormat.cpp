@@ -84,7 +84,76 @@ std::wstring_view LineEndingText(LineEnding ending) noexcept {
     }
 }
 
+bool IsUtf8Continuation(unsigned char value) noexcept {
+    return (value & 0xC0u) == 0x80u;
+}
+
 } // namespace
+
+bool IsValidUtf8(std::string_view bytes) noexcept {
+    for (std::size_t index = 0; index < bytes.size();) {
+        const unsigned char lead = static_cast<unsigned char>(bytes[index]);
+        if (lead <= 0x7Fu) {
+            ++index;
+            continue;
+        }
+
+        std::size_t length = 0;
+        unsigned int codePoint = 0;
+        unsigned int minimum = 0;
+        if (lead >= 0xC2u && lead <= 0xDFu) {
+            length = 2;
+            codePoint = lead & 0x1Fu;
+            minimum = 0x80u;
+        } else if (lead >= 0xE0u && lead <= 0xEFu) {
+            length = 3;
+            codePoint = lead & 0x0Fu;
+            minimum = 0x800u;
+        } else if (lead >= 0xF0u && lead <= 0xF4u) {
+            length = 4;
+            codePoint = lead & 0x07u;
+            minimum = 0x10000u;
+        } else {
+            return false;
+        }
+
+        if (index + length > bytes.size()) {
+            return false;
+        }
+
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const unsigned char continuation = static_cast<unsigned char>(bytes[index + offset]);
+            if (!IsUtf8Continuation(continuation)) {
+                return false;
+            }
+            codePoint = (codePoint << 6) | (continuation & 0x3Fu);
+        }
+
+        if (codePoint < minimum || codePoint > 0x10FFFFu || (codePoint >= 0xD800u && codePoint <= 0xDFFFu)) {
+            return false;
+        }
+        index += length;
+    }
+
+    return true;
+}
+
+bool LooksLikeOem437(std::string_view bytes) noexcept {
+    // DOS NFO art commonly uses CP437 shading, box-drawing, and block glyphs.
+    // Requiring two graphic bytes avoids treating a normal UTF-8 accented word
+    // as OEM data while catching the paired line characters used by NFO files.
+    std::size_t graphicCount = 0;
+    for (const char raw : bytes) {
+        const unsigned char value = static_cast<unsigned char>(raw);
+        if ((value >= 0xB0u && value <= 0xDFu) || (value >= 0xF0u && value <= 0xFEu)) {
+            ++graphicCount;
+            if (graphicCount >= 2) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 std::wstring EncodingLabel(TextEncoding encoding) {
     switch (encoding) {
@@ -96,6 +165,8 @@ std::wstring EncodingLabel(TextEncoding encoding) {
         return L"UTF-16 BE";
     case TextEncoding::Ansi:
         return L"ANSI";
+    case TextEncoding::Oem437:
+        return L"OEM 437";
     case TextEncoding::Utf8:
     default:
         return L"UTF-8";
@@ -214,6 +285,13 @@ std::optional<std::vector<char>> EncodeTextBytes(
         auto bytes = WideToCodePage(CP_ACP, normalized, WC_NO_BEST_FIT_CHARS, true);
         if (!bytes) {
             error = L"Could not encode every character using the system ANSI code page.";
+        }
+        return bytes;
+    }
+    case TextEncoding::Oem437: {
+        auto bytes = WideToCodePage(437, normalized, WC_NO_BEST_FIT_CHARS, true);
+        if (!bytes) {
+            error = L"Could not encode every character using OEM code page 437.";
         }
         return bytes;
     }

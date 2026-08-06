@@ -6,6 +6,9 @@
 #include <stdexcept>
 #include <utility>
 
+#include "TextFileTypes.h"
+#include "TextFormat.h"
+
 namespace NativePad {
 
 namespace {
@@ -147,6 +150,7 @@ MappedTextDocument& MappedTextDocument::operator=(MappedTextDocument&& other) no
     maxLineLength_ = other.maxLineLength_;
     encoding_ = other.encoding_;
     encodingLabel_ = std::move(other.encodingLabel_);
+    preferOem437_ = other.preferOem437_;
     lineStarts_ = std::move(other.lineStarts_);
 
     other.file_ = INVALID_HANDLE_VALUE;
@@ -160,6 +164,7 @@ MappedTextDocument& MappedTextDocument::operator=(MappedTextDocument&& other) no
     other.maxLineLength_ = 0;
     other.encoding_ = Encoding::Utf8;
     other.encodingLabel_ = L"UTF-8/ANSI";
+    other.preferOem437_ = false;
     other.lineStarts_ = {0};
 
     return *this;
@@ -169,6 +174,8 @@ bool MappedTextDocument::Open(const std::wstring& path, std::wstring& error) {
     // Map the entire file into the process address space. This reserves address
     // range, not physical memory; the OS pages data in as the editor touches it.
     Close();
+    const TextFileType* fileType = TextFileTypeForPath(path);
+    preferOem437_ = fileType != nullptr && fileType->extension == L".nfo";
 
     file_ = CreateFileW(
         path.c_str(),
@@ -319,6 +326,7 @@ void MappedTextDocument::Close() noexcept {
     maxLineLength_ = 0;
     encoding_ = Encoding::Utf8;
     encodingLabel_ = L"UTF-8/ANSI";
+    preferOem437_ = false;
     lineStarts_.clear();
     lineStarts_.push_back(0);
 }
@@ -397,8 +405,8 @@ std::optional<MappedTextDocument::Match> MappedTextDocument::Find(std::wstring_v
 }
 
 void MappedTextDocument::DetectEncoding() {
-    // BOMs give us exact UTF-16 handling. Without a BOM we render as UTF-8 when
-    // possible and fall back per-range to ANSI for legacy files.
+    // BOMs give us exact UTF-16 handling. NFO files without a BOM use UTF-8
+    // when valid, but switch to OEM 437 for the CP437 art used by DOS NFOs.
     dataOffset_ = 0;
     encoding_ = Encoding::Utf8;
     encodingLabel_ = L"UTF-8/ANSI";
@@ -422,6 +430,13 @@ void MappedTextDocument::DetectEncoding() {
     }
 
     contentByteCount_ = static_cast<std::size_t>(fileByteCount_) - dataOffset_;
+    if (dataOffset_ == 0 && preferOem437_) {
+        const std::string_view content(reinterpret_cast<const char*>(data_), contentByteCount_);
+        if (LooksLikeOem437(content) || !IsValidUtf8(content)) {
+            encoding_ = Encoding::Oem437;
+            encodingLabel_ = L"OEM 437";
+        }
+    }
     length_ = IsUtf16() ? contentByteCount_ / sizeof(wchar_t) : contentByteCount_;
 }
 
@@ -500,13 +515,18 @@ std::wstring MappedTextDocument::ByteTextRange(std::size_t position, std::size_t
     // Decode only the requested span. Paint normally asks for a single visible
     // line segment, so this avoids full-file transcoding.
     const char* start = reinterpret_cast<const char*>(data_ + dataOffset_ + position);
-    if (encoding_ != Encoding::Ansi) {
+    if (encoding_ == Encoding::Oem437) {
+        if (auto text = MultiByteToWideRange(437, start, length, 0)) {
+            return *text;
+        }
+    } else if (encoding_ != Encoding::Ansi) {
         if (auto text = MultiByteToWideRange(CP_UTF8, start, length, MB_ERR_INVALID_CHARS)) {
             return *text;
         }
     }
 
-    if (auto text = MultiByteToWideRange(CP_ACP, start, length, 0)) {
+    const UINT fallbackCodePage = encoding_ == Encoding::Oem437 ? 437 : CP_ACP;
+    if (auto text = MultiByteToWideRange(fallbackCodePage, start, length, 0)) {
         return *text;
     }
 
@@ -516,7 +536,9 @@ std::wstring MappedTextDocument::ByteTextRange(std::size_t position, std::size_t
 std::optional<MappedTextDocument::Match> MappedTextDocument::FindBytes(std::wstring_view needle, std::size_t start, bool down, bool matchCase) const {
     // Byte-backed search is intentionally ASCII-case-insensitive for speed and
     // predictability on large logs. Non-ASCII bytes still match exactly.
-    const UINT codePage = encoding_ == Encoding::Ansi ? CP_ACP : CP_UTF8;
+    const UINT codePage = encoding_ == Encoding::Ansi
+                              ? CP_ACP
+                              : (encoding_ == Encoding::Oem437 ? 437 : CP_UTF8);
     auto needleBytes = WideToMultiByteRange(codePage, needle);
     if (!needleBytes || needleBytes->empty() || needleBytes->size() > length_) {
         return std::nullopt;

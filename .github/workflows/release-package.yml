@@ -1,11 +1,22 @@
 name: Release Package
 
+env:
+  # Pin the official UPX build and verify the archive before it ever touches
+  # the release executable. Packing happens before any future code-signing step.
+  UPX_VERSION: "5.2.0"
+  UPX_SHA256: "b471ebf1b7f20f4a89150264ed9a008a2a5bfd247f3c6d1184a75bb59ca08f5d"
+
 on:
   workflow_dispatch:
     inputs:
       version:
         description: Expected version already committed in src/NativePad.rc
         required: true
+      pack_with_upx:
+        description: Pack the release executable with the verified UPX build
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   package:
@@ -49,6 +60,57 @@ jobs:
           }
           "PACKAGE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download and verify UPX
+        if: ${{ inputs.pack_with_upx }}
+        shell: pwsh
+        run: |
+          $archiveName = "upx-$env:UPX_VERSION-win64.zip"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archiveName
+          $extractPath = Join-Path $env:RUNNER_TEMP "upx-$env:UPX_VERSION"
+          $downloadUrl = "https://github.com/upx/upx/releases/download/v$env:UPX_VERSION/$archiveName"
+
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          $actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:UPX_SHA256) {
+            throw "UPX SHA-256 mismatch. Expected $env:UPX_SHA256, got $actualSha256."
+          }
+
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath -Force
+          $upx = Get-ChildItem -LiteralPath $extractPath -Filter "upx.exe" -File -Recurse | Select-Object -First 1
+          if (-not $upx) {
+            throw "The verified UPX archive did not contain upx.exe."
+          }
+
+          & $upx.FullName --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "The verified UPX binary could not be executed."
+          }
+          "UPX_PATH=$($upx.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Pack Release executable with UPX
+        if: ${{ inputs.pack_with_upx }}
+        shell: pwsh
+        working-directory: NativePad
+        run: |
+          $exe = (Resolve-Path ".\bin\x64\Release\NativePad.exe").Path
+          $before = (Get-Item -LiteralPath $exe).Length
+
+          & $env:UPX_PATH --best --lzma --force --no-color $exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "UPX failed to pack NativePad.exe."
+          }
+
+          & $env:UPX_PATH --test --no-color $exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "UPX integrity testing failed for NativePad.exe."
+          }
+
+          $after = (Get-Item -LiteralPath $exe).Length
+          if ($after -ge $before) {
+            throw "UPX did not reduce NativePad.exe ($before bytes -> $after bytes)."
+          }
+          "UPX reduced NativePad.exe from $before bytes to $after bytes." | Out-Host
 
       - name: Create ZIP
         shell: pwsh
