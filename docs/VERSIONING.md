@@ -67,11 +67,15 @@ To print the current version without changing anything:
 3. Run the test suite.
 4. Confirm the About dialog shows the expected version and build timestamp.
 5. Commit the resulting `src/NativePad.rc`.
-6. Run the `Release Package` workflow with that exact version as its input.
+6. Run the `Release Package` workflow with that exact version as its input;
+   leave `pack_with_upx` enabled for the standard compressed packages.
 
 The packaging workflow builds with `AutoIncrementVersion=false`, so the released
 version is exactly what was committed. It fails if the built executable's
 version does not match the input you supplied.
+The workflow pins and verifies UPX before packing the executable, then runs
+`upx --test` before creating the ZIP and installer. Set `pack_with_upx` to
+`false` only for a deliberate uncompressed diagnostic or compatibility build.
 
 Record the release in [CHANGELOG.md](../CHANGELOG.md) and follow
 [Release Checklist](RELEASE_CHECKLIST.md) before publishing.

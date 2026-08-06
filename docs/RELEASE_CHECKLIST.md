@@ -170,6 +170,8 @@ Work top to bottom. Anything that fails blocks the release.
 
 - [ ] Run the `Release Package` workflow with the version committed in
       `src/NativePad.rc`.
+- [ ] Leave `pack_with_upx` enabled for the normal release; use the uncompressed
+      option only when documenting a compatibility or antivirus exception.
 - [ ] The ZIP contains `NativePad.exe`, `README.md`, `LICENSE`,
       `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`, `licenses`, and `docs`.
 - [ ] `licenses\source\darkmodelib` holds the complete corresponding

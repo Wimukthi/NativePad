@@ -135,7 +135,8 @@ First published release.
 - Expanded tests and documentation around the mapped read-only large-file
   backend.
 
-[Unreleased]: https://github.com/Wimukthi/NativePad/compare/v1.1.0.3...HEAD
+[Unreleased]: https://github.com/Wimukthi/NativePad/compare/v1.1.0.4...HEAD
+[1.1.0.4]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.4
 [1.1.0.3]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.3
 [1.1.0.2]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.2
 [1.1.0.1]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.1
