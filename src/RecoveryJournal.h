@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -26,9 +27,13 @@ public:
     // Journals for this process under the default recovery directory.
     RecoveryJournal();
 
+    // A document id lets one NativePad process keep an independent journal for
+    // every open tab.
+    explicit RecoveryJournal(std::uint64_t documentId);
+
     // Custom root and owning process id, used by tests to simulate journals
     // left behind by a crashed process.
-    RecoveryJournal(std::wstring rootDirectory, DWORD processId);
+    RecoveryJournal(std::wstring rootDirectory, DWORD processId, std::uint64_t documentId = 0);
 
     RecoveryJournal(const RecoveryJournal&) = delete;
     RecoveryJournal& operator=(const RecoveryJournal&) = delete;
@@ -53,6 +58,7 @@ private:
 
     std::wstring rootDirectory_;
     DWORD processId_{0};
+    std::uint64_t documentId_{0};
 };
 
 } // namespace NativePad

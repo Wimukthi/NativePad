@@ -13,8 +13,10 @@ Contrast integration layer.
 
 | Module | Files | Responsibility |
 | --- | --- | --- |
-| Application shell | `main.cpp` | `AppWindow`: menu strip, status bar, command routing, document and dirty state, preference load/save |
-| Editor control | `EditorView.*` | DirectWrite rendering, caret and selection, scrolling, input, clipboard, undo/redo |
+| Application shell | `main.cpp` | `AppWindow`: menu/tab/status chrome, command routing, active-session binding, preference load/save |
+| Document session | `DocumentSession.h` | Per-tab backend, path/format metadata, dirty state, editor state, file stamp, Follow Tail, and recovery journal |
+| Tab strip | `TabStrip.*` | One custom-painted HWND for tab titles, close/new controls, overflow scrolling, hit testing, and tooltips |
+| Editor control | `EditorView.*` | Shared DirectWrite rendering surface, input, clipboard, and movable per-tab interaction state |
 | Editable document | `DocumentBuffer.*` | Piece table over decoded UTF-16 text |
 | Line index | `LineIndex.*` | Logical line starts for editable documents, updated incrementally |
 | Mapped document | `MappedTextDocument.*` | Read-only memory-mapped text access, line indexing, and find |
@@ -28,6 +30,7 @@ Contrast integration layer.
 | Dialogs | `FontDialog.*`, `FindReplaceDialog.*`, `GoToDialog.*`, `AboutDialog.*`, `MessageDialog.*` | Custom theme-aware modal and modeless dialogs |
 | Printing | `Printing.*` | Pagination and spooling worker |
 | Settings | `Settings.*` | INI read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini` |
+| Session restore | `SessionStore.*` | Versioned normal-exit manifest and content snapshots under `%LOCALAPPDATA%\NativePad\Session` |
 | Crash recovery | `RecoveryJournal.*` | Journaling of unsaved documents and recovery of journals abandoned by a crashed process |
 | Update checker | `UpdateChecker.*` | GitHub release discovery, installer download, SHA-256 verification |
 | Default editor | `DefaultEditor.*` | Per-user plain-text associations and the Windows Default Apps hand-off |
@@ -45,16 +48,45 @@ in `UiSupport`; generic Windows theming belongs in `Wimukthi.Win32Theme`.
 
 ## Ownership
 
-`AppWindow` owns the top-level HWND, the custom menu strip and popup menus, the
-status bar, dialog creation, file and print commands, document metadata and
-dirty state, and preference persistence.
+`AppWindow` owns the top-level HWND, one menu strip, one `TabStrip`, one
+`EditorView`, the status bar, dialogs, commands, and a stable collection of
+`DocumentSession` objects. A tab id, rather than a vector index, is used by UI
+notifications so closing or reordering sessions cannot redirect an action.
 
-`EditorView` owns the child editor HWND, its Direct2D and DirectWrite
-resources, the caret blink timer, selection and scroll state, word wrap state,
-visual-only options such as line numbers, and the undo/redo stacks.
+Each `DocumentSession` owns one document backend and all file-specific state.
+Only the active session is attached to `EditorView`. Switching tabs moves an
+`EditorViewState` (line index, undo/redo stacks, caret, selection, and scroll
+positions) out of the shared editor and moves the destination state in. The
+document text is never copied and the normal-document line index is not rebuilt
+on a tab switch.
+
+`EditorView` owns the sole child editor HWND, Direct2D/DirectWrite resources,
+the caret blink timer, and active-only visual caches. Font, word wrap, line
+numbers, theme, and zoom remain window-global, so inactive tabs allocate no
+render targets or UI controls.
 
 The split keeps Win32 command handling out of the editor and editor painting
 out of the shell.
+
+## Session Persistence
+
+Normal exit and explicit tab closure have different semantics. `WM_CLOSE`
+serializes one versioned `SessionStore` manifest for the current tab order and
+active tab, then clears crash journals and destroys the window. It does not
+walk dirty tabs with save prompts. **Close Tab** still calls the normal
+save/discard/cancel path and removes that tab from the in-memory workspace.
+
+Clean file-backed tabs store metadata only and reopen from their paths. Dirty
+or untitled `DocumentBuffer` tabs store exact UTF-16 snapshots. Dirty
+`LargeTextDocument` tabs stream their current bytes to a snapshot through
+`SaveTo`, avoiding a full decoded copy. The manifest is staged and atomically
+replaced only after every required snapshot succeeds; a failure leaves the
+window open.
+
+Startup consumes the manifest after validating all records and loading normal
+snapshots. This prevents an explicitly closed tab from returning after a later
+crash in the new process. Large snapshots remain mapped until their tabs are
+saved, explicitly closed, or snapshotted on the next normal exit.
 
 ## Document Backends
 
@@ -62,9 +94,9 @@ out of the shell.
 
 | Field | Backend | Coordinates | Editable |
 | --- | --- | --- | --- |
-| `document_` | `DocumentBuffer` | UTF-16 code units | Yes |
-| `mappedDocument_` | `MappedTextDocument` | UTF-16 code units, or bytes for UTF-8/ANSI/OEM 437 | No |
-| `largeDocument_` | `LargeTextDocument` | Bytes | Yes |
+| `document` | `DocumentBuffer` | UTF-16 code units | Yes |
+| `mappedDocument` | `MappedTextDocument` | UTF-16 code units, or bytes for UTF-8/ANSI/OEM 437 | No |
+| `largeDocument` | `LargeTextDocument` | Bytes | Yes |
 
 Ordinary files are decoded into UTF-16 and stored in `DocumentBuffer`, which
 supports editing, undo/redo, replace, save, and print. The open path records
@@ -93,8 +125,10 @@ split.
 
 ## Rendering
 
-The editor draws into a Direct2D render target and measures text with
-DirectWrite, painting only the visible rows.
+The single shared editor draws into one Direct2D render target and measures text
+with DirectWrite, painting only the active tab's visible rows. The tab strip is
+one double-buffered child window with a small Direct2D overlay for antialiased
+controls; it does not create a child HWND per tab.
 
 `TextFileTypes` maps a recognized extension to an optional `SyntaxLanguage`.
 `AppWindow` updates that language whenever a normal document is opened, saved,
@@ -106,6 +140,12 @@ parser or cache.
 
 The caret is custom-drawn and blinked on a timer using the system caret blink
 interval, because the editor does not use the Win32 caret APIs.
+
+Mouse selection uses capture. When a captured pointer leaves the editor,
+`EditorView` runs a bounded 50 ms autoscroll timer and extends the selection at
+the nearest viewport edge. The same visible-row calculation clamps wheel,
+scrollbar, caret, and resize paths so documents cannot scroll past their final
+complete page.
 
 Line numbers are an editor gutter, not document text, so save, copy, search,
 replace, and print never see them. With word wrap on, only logical line starts
@@ -149,7 +189,9 @@ re-prompt on every activation.
   read-only while following so edits cannot race the external writer.
 
 After each refresh the caret moves to the end of the document. Follow Tail is
-per-file state and stops when another file is opened or the document is reset.
+per-tab state. Only the active tab is polled; switching away suspends the shared
+timer, and returning performs an immediate catch-up refresh before polling
+resumes.
 
 Note that while a mapping is held, external writers can append to the file but
 cannot truncate it — Windows fails the truncation with
@@ -159,19 +201,22 @@ cannot truncate it — Windows fails the truncation with
 
 While an editable document is dirty, the shell journals a snapshot to
 `%LOCALAPPDATA%\NativePad\Recovery` on a debounced timer, at most once every
-three seconds. A journal is a pair of files named after the owning process id:
-a UTF-16 LE content file, staged and renamed so it is never half-written, and a
-metadata file (original path, encoding, line ending) written last so a journal
-only becomes discoverable once it is complete.
+three seconds. A journal is a pair of files named after the owning process id
+and tab id (`session-<pid>-<tab-id>`): a UTF-16 LE content file, staged and
+renamed so it is never half-written, and a metadata file (original path,
+encoding, line ending) written last so a journal only becomes discoverable once
+it is complete.
 
-The journal is deleted whenever the document reaches a clean or intentionally
-discarded state — a successful save, opening another file, **File > New**, or a
-normal exit. A journal that survives therefore means the process crashed.
+Each journal is deleted when its tab is saved, intentionally closed, or the
+window exits normally. Switching tabs and opening another file leave unrelated
+journals untouched. A journal that survives therefore means the process
+crashed.
 
 On startup the shell scans the recovery directory for journals whose owning
-process is no longer running, claims one by removing it from disk, and offers to
-restore it. A restored document is re-journaled immediately so it survives a
-second crash. Mapped and read-only preview documents are never journaled.
+process is no longer running and offers every recoverable document. Each
+accepted snapshot opens in its own tab and is re-journaled immediately so it
+survives a second crash. Mapped, read-only preview, and editable-large documents
+are never journaled.
 
 ## Update Flow
 
@@ -182,7 +227,7 @@ against the executable's file version, locates the
 asset's SHA-256 digest when GitHub publishes one.
 
 The UI thread owns every prompt and launches the installer elevated with
-`ShellExecuteW("runas")` only after dirty-document state has been handled.
+`ShellExecuteW("runas")` only after the current tab session has been stored.
 
 Automatic checks are off by default, controlled by `CheckForUpdates` and
 rate-limited by `LastUpdateCheckUtc`. The feed endpoint is `UpdateUrl`, which

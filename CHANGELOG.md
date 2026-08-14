@@ -11,6 +11,35 @@ incremented automatically and does not by itself imply a release.
 
 Nothing yet.
 
+## [1.2.0.1] - 2026-08-14
+
+### Added
+
+- Lightweight tabbed editing with one shared editor/rendering surface. Each tab
+  retains its document backend, undo history, caret, selection, scroll position,
+  file metadata, Follow Tail mode, and crash-recovery journal.
+- `Ctrl+W` closes a tab; `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+PageDown`, and
+  `Ctrl+PageUp` switch tabs. Middle-click closes a tab.
+- Drag-and-drop and command-line startup now open every supplied file in its own
+  tab. Opening an already-open path activates the existing tab.
+- Notepad++-style session restore: closing NativePad remembers the tab order,
+  active tab, file metadata, Follow Tail state, and unsaved normal or editable
+  large-file content without per-tab save prompts. Explicit Close Tab still
+  prompts before discarding unsaved work.
+- A persisted **View > Tab Bar** option hides the strip and returns the editor
+  to the classic Notepad menu-to-content layout without closing documents.
+
+### Changed
+
+- Refined the tab strip with a contrasting selected surface, an accent line,
+  quieter inactive tabs, a compact 30-DIP height, rounded antialiased surfaces,
+  and antialiased Close and New Tab controls.
+- Drag selections now autoscroll beyond the editor edges, and wheel/native
+  scrollbar positions stop at the final complete page instead of exposing
+  empty space below short documents.
+- Untitled numbers now reuse the lowest available value, so repeatedly closing
+  the final blank tab always returns to `Untitled`.
+
 ## [1.1.0.4] - 2026-08-07
 
 ### Added
@@ -135,7 +164,8 @@ First published release.
 - Expanded tests and documentation around the mapped read-only large-file
   backend.
 
-[Unreleased]: https://github.com/Wimukthi/NativePad/compare/v1.1.0.4...HEAD
+[Unreleased]: https://github.com/Wimukthi/NativePad/compare/v1.2.0.1...HEAD
+[1.2.0.1]: https://github.com/Wimukthi/NativePad/releases/tag/v1.2.0.1
 [1.1.0.4]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.4
 [1.1.0.3]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.3
 [1.1.0.2]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.2

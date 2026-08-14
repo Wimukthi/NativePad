@@ -50,6 +50,12 @@ These keep the codebase reviewable:
   `LargeTextDocument`.
 - `EditorView` stays backend-neutral — go through its helper methods rather
   than reaching for a specific backend.
+- `DocumentSession` owns per-tab document and interaction state. Keep theme,
+  font, wrap, line-number, and rendering resources window-global.
+- `TabStrip` remains one lightweight HWND. Do not add per-tab editor or button
+  windows.
+- `SessionStore` owns normal-exit workspace serialization. `RecoveryJournal`
+  remains the separate unclean-exit path for ordinary dirty buffers.
 - UI commands route through `AppWindow`.
 - Background threads never touch HWND-owned UI state.
 - NativePad-specific palette, DPI, and control helpers live in `UiSupport`.
@@ -91,8 +97,8 @@ MSBuild.exe .\NativePad.sln /p:Configuration=Release /p:Platform=x64 /m
 .\bin\x64\Release\NativePad.Tests.exe
 ```
 
-The UI has no automated coverage, so changes to dialogs, menus, theming, DPI
-handling, printing, or scrollbars need manual verification. The painting
+The UI has no automated coverage, so changes to dialogs, menus, tabs, theming,
+DPI handling, printing, or scrollbars need manual verification. The painting
 checklist in [docs/UI_AND_THEMING.md](docs/UI_AND_THEMING.md) is the short
 version; [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) is the full one.
 

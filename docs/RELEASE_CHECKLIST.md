@@ -23,9 +23,11 @@ Work top to bottom. Anything that fails blocks the release.
 
 ## 2. File Workflows
 
-- [ ] New prompts to save a modified document.
-- [ ] Open works from the File menu, `Ctrl+O`, drag-and-drop, and a
-      command-line path.
+- [ ] New Tab (`Ctrl+N` and `+`) opens an empty tab without disturbing modified
+      tabs.
+- [ ] Open works from the File menu and `Ctrl+O`; multi-file drag-and-drop and
+      multiple command-line paths each open all files as tabs.
+- [ ] Opening the same canonical path twice activates its existing tab.
 - [ ] Open/Save filters include the supported plain-text/data extensions, and
       JSON, INI, Markdown, and XML files receive readable highlighting.
 - [ ] A CP437 `.nfo` file preserves box-drawing characters on open, search, and
@@ -34,19 +36,55 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] Save As writes UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, ANSI, and OEM 437 (NFO).
 - [ ] An ANSI Save As of unrepresentable text is refused without truncating the
       target file.
-- [ ] Exit prompts on a modified document and exits cleanly after Save, Don't
-      Save, and Cancel.
+- [ ] Exit closes without per-tab save prompts and leaves the complete workspace
+      available for the next launch.
 
 ## 3. Editing
 
 - [ ] Typing, delete, cut, copy, paste, undo, and redo work.
 - [ ] Double-click selects a word; triple-click selects the logical line.
+- [ ] Dragging a selection above, below, left, or right of the editor scrolls at
+      a bounded rate and continues while the pointer remains outside.
+- [ ] Mouse wheel and scrollbar input leave vertical position at zero when the
+      complete document fits in the editor.
 - [ ] Select All works on editable and mapped documents.
 - [ ] The caret blinks and stays visible while typing, scrolling, and resizing.
 - [ ] The I-beam appears only over editable text — not over menus, the status
       bar, scrollbars, or dialogs.
 - [ ] `Ctrl+Shift+D`, `Ctrl+Shift+K`, `Alt+Up`, and `Alt+Down` each form a
       single undo step and preserve line endings.
+
+### Tabs
+
+- [ ] Switching tabs preserves each document, undo/redo history, caret,
+      selection, vertical/horizontal scroll, encoding, and dirty state.
+- [ ] `Ctrl+W`, the close button, and middle-click close the intended tab and
+      prompt only when that tab is dirty.
+- [ ] `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+PageDown`, and `Ctrl+PageUp` cycle in
+      the expected direction.
+- [ ] Closing the final tab creates a fresh `Untitled`; repeating the action
+      never increments its number.
+- [ ] At narrow widths and with many tabs, overflow arrows keep every tab
+      reachable and the active tab visible.
+- [ ] The active tab is immediately distinguishable in light, dark, and High
+      Contrast modes; the `+` button follows the visible tabs.
+- [ ] Tabs have smooth rounded top edges and a compact 30-DIP height at 100%
+      scaling, with proportional geometry at other DPIs.
+- [ ] Close and New Tab glyphs are centered and antialiased at 100%, 125%, 150%,
+      and 200% DPI, with compact rounded hover feedback and no clipping.
+- [ ] Process inspection shows one `NativePadEditorView` and one
+      `NativePadTabStrip` regardless of tab count.
+- [ ] **View > Tab Bar** hides the strip, recovers its full height for the
+      editor, persists across restart, and leaves keyboard tab switching usable.
+- [ ] A normal exit and relaunch restores tab order, active tab, paths,
+      encoding/line-ending metadata, Follow Tail state, and exact dirty or
+      untitled content.
+- [ ] Clean file-backed tabs reopen from disk, while a dirty editable-large tab
+      restores from its session snapshot and can still be saved to its original
+      path.
+- [ ] Explicitly closing a tab keeps it out of the next saved session; canceling
+      the dirty-tab prompt leaves it open.
+- [ ] A session-write failure reports the error and leaves NativePad open.
 
 ## 4. Search and Replace
 
@@ -61,8 +99,8 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] Opening files fills the list, most recent first, no duplicates, capped at
       eight.
 - [ ] The list survives a restart.
-- [ ] A recent entry prompts to save a modified document first, and an entry
-      whose file no longer exists is removed after the failed open.
+- [ ] A recent entry opens or activates its tab without disturbing modified
+      tabs; an entry whose file no longer exists is removed after the failed open.
 - [ ] Clear Recent Files empties the list.
 
 ## 6. Format and View
@@ -70,7 +108,7 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] Word Wrap toggles without corrupting the scroll position.
 - [ ] Go To and the status-bar line count stay available with Word Wrap on.
 - [ ] The Font dialog resizes without repaint artifacts.
-- [ ] Line Numbers and Status Bar toggle and persist.
+- [ ] Tab Bar, Line Numbers, and Status Bar toggle and persist.
 - [ ] With line numbers on and Word Wrap off, long pasted lines do not paint
       into the gutter while horizontally scrolled.
 - [ ] `Ctrl`+wheel, `Ctrl+Plus/Minus`, and `Ctrl+0` zoom; the status bar shows
@@ -119,7 +157,7 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] Save As writes a new file in the document's encoding.
 - [ ] Editing near multibyte UTF-8 characters never corrupts them.
 - [ ] Printing and Save As encoding conversion are disabled.
-- [ ] Opening another file or File > New releases the mapping.
+- [ ] Switching tabs retains the mapping and state; closing its tab releases it.
 
 ## 9. External Changes and Follow Tail
 
@@ -135,17 +173,22 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] Editing commands and Save are disabled while following, and return
       afterwards.
 - [ ] Log rotation (delete + rename) reloads the new file.
-- [ ] Opening a different file or File > New turns Follow Tail off.
+- [ ] Switching away suspends polling without clearing Follow Tail; switching
+      back catches up immediately and resumes polling.
 
 ## 10. Crash Recovery
 
+- [ ] Normal-exit session restore uses `%LOCALAPPDATA%\NativePad\Session` and
+      does not produce an abandoned-journal prompt on the next launch.
+
 - [ ] Typing into a document and killing the process from Task Manager leaves a
       journal pair under `%LOCALAPPDATA%\NativePad\Recovery`.
-- [ ] The next launch offers to restore it, and accepting restores the exact
-      text as a dirty document with the original path and encoding.
+- [ ] Multiple dirty tabs create independent `session-<pid>-<tab-id>` journal
+      pairs. The next launch offers all of them and restores each accepted
+      snapshot as a dirty tab with the original path and encoding.
 - [ ] Declining discards the journal without re-prompting on the next launch.
-- [ ] Save, Save As, File > New, opening another file, and a clean exit all
-      remove the journal.
+- [ ] Save, Save As, closing that tab, and a clean exit remove the appropriate
+      journal; switching or opening another tab leaves it intact.
 - [ ] Two NativePad instances do not claim each other's journals.
 
 ## 11. Printing
@@ -164,7 +207,8 @@ Work top to bottom. Anything that fails blocks the release.
 - [ ] `UpdateUrl`, `CheckForUpdates`, and `LastUpdateCheckUtc` are written to
       `%LOCALAPPDATA%\NativePad\NativePad.ini`.
 - [ ] A downloaded installer lands in `%LOCALAPPDATA%\NativePad\Updates`.
-- [ ] A modified document prompts before the downloaded installer launches.
+- [ ] The current tab session is stored before the downloaded installer
+      launches, without per-tab save prompts.
 
 ## 13. Packaging
 

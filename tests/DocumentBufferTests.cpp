@@ -30,6 +30,7 @@ int main() {
     void RunLineIndexTests();
     void RunLargeTextDocumentTests();
     void RunRecoveryJournalTests();
+    void RunSessionStoreTests();
     void RunMappedTextDocumentTests();
     void RunTextFormatTests();
     void RunSyntaxHighlighterTests();
@@ -103,6 +104,7 @@ int main() {
     RunMappedTextDocumentTests();
     RunLargeTextDocumentTests();
     RunRecoveryJournalTests();
+    RunSessionStoreTests();
     RunTextFormatTests();
     RunSyntaxHighlighterTests();
     RunTextFileTypesTests();

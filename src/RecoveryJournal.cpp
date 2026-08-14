@@ -19,8 +19,12 @@ constexpr std::wstring_view kContentExtension = L".txt";
 constexpr std::wstring_view kSessionPrefix = L"session-";
 constexpr int kMetaVersion = 1;
 
-std::wstring SessionBaseName(DWORD processId) {
-    return std::wstring(kSessionPrefix) + std::to_wstring(processId);
+std::wstring SessionBaseName(DWORD processId, std::uint64_t documentId) {
+    std::wstring name = std::wstring(kSessionPrefix) + std::to_wstring(processId);
+    if (documentId != 0) {
+        name += L"-" + std::to_wstring(documentId);
+    }
+    return name;
 }
 
 bool WriteFileBytes(const std::wstring& path, const void* data, std::size_t byteCount) {
@@ -249,15 +253,18 @@ bool ProcessIsRunning(DWORD processId) {
 RecoveryJournal::RecoveryJournal()
     : rootDirectory_(DefaultRootDirectory()), processId_(GetCurrentProcessId()) {}
 
-RecoveryJournal::RecoveryJournal(std::wstring rootDirectory, DWORD processId)
-    : rootDirectory_(std::move(rootDirectory)), processId_(processId) {}
+RecoveryJournal::RecoveryJournal(std::uint64_t documentId)
+    : rootDirectory_(DefaultRootDirectory()), processId_(GetCurrentProcessId()), documentId_(documentId) {}
+
+RecoveryJournal::RecoveryJournal(std::wstring rootDirectory, DWORD processId, std::uint64_t documentId)
+    : rootDirectory_(std::move(rootDirectory)), processId_(processId), documentId_(documentId) {}
 
 std::wstring RecoveryJournal::MetaPath() const {
-    return (std::filesystem::path(rootDirectory_) / (SessionBaseName(processId_) + std::wstring(kMetaExtension))).wstring();
+    return (std::filesystem::path(rootDirectory_) / (SessionBaseName(processId_, documentId_) + std::wstring(kMetaExtension))).wstring();
 }
 
 std::wstring RecoveryJournal::ContentPath() const {
-    return (std::filesystem::path(rootDirectory_) / (SessionBaseName(processId_) + std::wstring(kContentExtension))).wstring();
+    return (std::filesystem::path(rootDirectory_) / (SessionBaseName(processId_, documentId_) + std::wstring(kContentExtension))).wstring();
 }
 
 bool RecoveryJournal::Save(const RecoverySnapshot& snapshot) {

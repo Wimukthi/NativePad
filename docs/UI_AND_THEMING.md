@@ -2,11 +2,16 @@
 
 NativePad uses native Win32 controls wherever a native control looks right, and
 custom-paints the surfaces that Windows will not theme coherently in dark mode:
-the menu strip, popup menus, the status bar, dialog backgrounds, and the editor.
+the menu strip, tab strip, popup menus, status bar, dialog backgrounds, and the
+editor.
 
 | Dark | Light |
 | --- | --- |
-| ![Main window in dark mode](images/main-window-dark.png) | ![Main window in light mode](images/main-window-light.png) |
+| ![Tabbed main window in dark mode](images/main-window-dark.png) | ![Tabbed main window in light mode](images/main-window-light.png) |
+
+Classic layout with **View > Tab Bar** cleared:
+
+![NativePad dark mode with the tab bar hidden](images/classic-window-dark.png)
 
 ## Division of Responsibility
 
@@ -21,7 +26,7 @@ NativePad owns everything specific to NativePad:
 
 - Colour palettes, via `ColorsForTheme` and `DialogColorsForTheme`.
 - DPI scaling and owner-draw helpers, in `src/UiSupport.*`.
-- Owner-draw painting for the editor, menu strip, popup menus, status bar,
+- Owner-draw painting for the editor, menu strip, tab strip, popup menus, status bar,
   dialog backgrounds, and the Font dialog's sample preview.
 
 **Do not** add registry, DWM, or UxTheme workarounds to NativePad. If a
@@ -94,6 +99,26 @@ The strip also emulates the standard keyboard cues: `Alt` or `F10` reveals
 top-level mnemonic underlines and moves focus into menu navigation until `Esc`
 or a menu command leaves that mode.
 
+## Tab Strip
+
+`TabStrip` is one 30-DIP, double-buffered child HWND between the menu and
+editor. Antialiased rounded top edges, a contrasting surface, and an accent line
+identify the selected tab, while the New Tab button sits directly after the
+visible tabs. The strip paints every tab, dirty marker, close button, and
+overflow control itself; there are no per-tab child controls. Inactive tabs own
+no render target or editor HWND.
+
+Tab widths are DPI-scaled and capped. When the available width cannot hold the
+minimum tab width, left/right buttons scroll the visible range and the active
+tab is brought into view automatically. Hover tooltips expose full paths when
+the displayed basename is truncated or ambiguous. Close and New Tab controls
+use Direct2D antialiasing with rounded hover surfaces. High Contrast uses the
+same system-colour fallback as the other custom surfaces.
+
+**View > Tab Bar** hides the child window and removes its height from layout;
+the editor then begins immediately below the menu strip. This visibility choice
+is persisted without changing tab ownership or session behavior.
+
 ## Editor Surface
 
 The editor is a child HWND registered by `EditorView`, rendered with a Direct2D
@@ -112,6 +137,11 @@ read-only state, file size where applicable, character count, and zoom.
 Non-editor chrome uses the arrow cursor; the I-beam is reserved for the editor
 text area.
 
+Wheel, native scrollbar, caret, and resize paths all clamp to the last complete
+page, so a document that fits cannot be scrolled into empty space. During mouse
+selection, capture plus a short UI timer extends the selection and scrolls at a
+bounded speed while the pointer remains outside the client area.
+
 ## Painting Checklist
 
 When you change UI code, check:
@@ -122,7 +152,10 @@ When you change UI code, check:
 - Message prompt icons at 150% and 200%.
 - Themed list boxes: scrolling, focus, and selection states.
 - Buttons: hover, pressed, default, disabled, and keyboard focus.
+- Tabs: active, hover, dirty, close, overflow, middle-click, keyboard cycling,
+  and hidden/visible layout.
 - Check and radio controls: checked, unchecked, focused, and disabled.
 - Popup menus: hover, disabled items, and separators.
 - The editor context menu, including that it shows the arrow cursor.
-- Horizontal and vertical scrollbars.
+- Horizontal and vertical scrollbars, including fit-to-viewport clamping and
+  drag-selection autoscroll beyond every edge.

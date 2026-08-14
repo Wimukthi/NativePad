@@ -36,7 +36,7 @@ These constraints explain most of the code you will read.
 | Principle | Consequence |
 | --- | --- |
 | Native | Direct Win32 and Direct2D/DirectWrite calls; no widget framework, no managed runtime |
-| Fast | Startup does no scanning, no plugin discovery, and no network I/O |
+| Fast | One shared editor, direct session reads, no plugin discovery, and no startup network I/O |
 | Familiar | Command shape and accelerators follow classic Notepad unless there is a concrete reason to differ |
 | Honest about size | Files that cannot be held in memory are never silently truncated or partially loaded |
 | Conservative | Few dependencies, explicit ownership, and warnings treated as errors |
@@ -54,8 +54,8 @@ NativePad has three document backends behind one editor control:
 `AppWindow` in `src/main.cpp` owns the shell — menus, status bar, command
 routing, and document state. `EditorView` owns rendering and navigation and
 works against whichever backend is active. Dialogs, file I/O, printing, popup
-menus, settings, and crash recovery each live in their own translation unit
-under `src/`. See [Architecture](ARCHITECTURE.md).
+menus, settings, session restore, and crash recovery each live in their own
+translation unit under `src/`. See [Architecture](ARCHITECTURE.md).
 
 ## Screenshots
 

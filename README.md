@@ -7,14 +7,14 @@
 **A native C++/Win32 replacement for classic Windows Notepad.**
 
 Instant startup, familiar menus and shortcuts, real dark mode, per-monitor DPI,
-and multi-gigabyte files that open without loading into RAM.
+lightweight tabs, and multi-gigabyte files that open without loading into RAM.
 
 [![CI](https://github.com/Wimukthi/NativePad/actions/workflows/ci.yml/badge.svg)](https://github.com/Wimukthi/NativePad/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Wimukthi/NativePad)](https://github.com/Wimukthi/NativePad/releases/latest)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 ![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 
-<img src="docs/images/main-window-dark.png" alt="NativePad main window in dark mode" width="900">
+<img src="docs/images/main-window-dark.png" alt="NativePad tabbed window in dark mode" width="900">
 
 </div>
 
@@ -32,13 +32,15 @@ adds only what a text editor genuinely needs.
   memory-mapped backend that indexes line starts instead of decoding the file.
 - **Correct on modern Windows.** Dark mode, High Contrast, and per-monitor v2
   DPI are handled throughout, including custom-painted menus and dialogs.
-- **Safe with unsaved work.** Dirty documents are journaled in the background
-  and offered for restore after a crash.
+- **Continues where you left off.** A normal exit restores the same tabs and
+  unsaved content without save prompts. Dirty documents are also journaled for
+  crash recovery.
 
 ## Features
 
 | Area | What you get |
 | --- | --- |
+| Tabs | Multiple documents in one window, with compact rounded tabs, an adjacent New Tab button, per-tab editing state, normal-exit session restore, and an optional hidden tab bar for a classic Notepad layout |
 | Editing | Undo/redo, cut/copy/paste, word/line selection, duplicate line, delete line, move line up/down |
 | Search | Find, Find Next/Previous, Replace, Replace All, Go To Line — all with wrap-around and match case |
 | Files | UTF-8, UTF-8 BOM, UTF-16 LE/BE, and ANSI detection; `.nfo` files also support OEM 437; encoding and line endings preserved on save; Save As can change encoding; common text/data extensions are registered together |
@@ -70,9 +72,9 @@ Editor**, then confirm the change in the Windows Default Apps page that opens.
 
 ## Screenshots
 
-| Light mode | Large file, read-only |
+| Light mode with tabs | Large file, read-only |
 | --- | --- |
-| ![Main window in light mode](docs/images/main-window-light.png) | ![A 588 MB log open through the mapped backend](docs/images/large-file-view.png) |
+| ![Tabbed main window in light mode](docs/images/main-window-light.png) | ![A 588 MB log open through the mapped backend](docs/images/large-file-view.png) |
 
 | Replace | Font |
 | --- | --- |

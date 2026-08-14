@@ -28,6 +28,8 @@ constexpr int kLineNumberHorizontalPadding = 8;
 constexpr int kLineNumberTextGap = 8;
 constexpr int kTabSize = 4;
 constexpr UINT_PTR kCaretBlinkTimerId = 1;
+constexpr UINT_PTR kDragScrollTimerId = 2;
+constexpr UINT kDragScrollIntervalMs = 50;
 constexpr std::size_t kMaxUndoActions = 512;
 
 float ColorComponent(BYTE value) {
@@ -188,16 +190,66 @@ void EditorView::SetLargeDocument(LargeTextDocument* document) {
     ResetView();
 }
 
-void EditorView::ResetView() {
-    caret_ = 0;
-    anchor_ = 0;
-    firstLine_ = 0;
-    firstVisualRow_ = 0;
-    horizontalColumn_ = 0;
-    desiredColumn_ = 0;
+void EditorView::SetDocument(DocumentBuffer* document, EditorViewState state) {
+    document_ = document;
+    mappedDocument_ = nullptr;
+    largeDocument_ = nullptr;
+    RestoreState(std::move(state));
+}
+
+void EditorView::SetMappedDocument(MappedTextDocument* document, EditorViewState state) {
+    mappedDocument_ = document;
+    document_ = nullptr;
+    largeDocument_ = nullptr;
+    RestoreState(std::move(state));
+}
+
+void EditorView::SetLargeDocument(LargeTextDocument* document, EditorViewState state) {
+    largeDocument_ = document;
+    document_ = nullptr;
+    mappedDocument_ = nullptr;
+    RestoreState(std::move(state));
+}
+
+EditorViewState EditorView::TakeState() noexcept {
+    state_.initialized_ = true;
+    EditorViewState result = std::move(state_);
+    state_ = EditorViewState{};
+    document_ = nullptr;
+    mappedDocument_ = nullptr;
+    largeDocument_ = nullptr;
+    return result;
+}
+
+void EditorView::RestoreState(EditorViewState state) {
+    if (!state.initialized_) {
+        ResetView();
+        return;
+    }
+
+    state_ = std::move(state);
+    const std::size_t length = DocumentLength();
+    state_.caret_ = std::min(state_.caret_, length);
+    state_.anchor_ = std::min(state_.anchor_, length);
     lastDoubleClickTick_ = 0;
-    undoStack_.clear();
-    redoStack_.clear();
+    InvalidateVisualRowCache();
+    UpdateScrollbars();
+    ResetCaretBlink();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    NotifyCursorChanged();
+}
+
+void EditorView::ResetView() {
+    state_.caret_ = 0;
+    state_.anchor_ = 0;
+    state_.firstLine_ = 0;
+    state_.firstVisualRow_ = 0;
+    state_.horizontalColumn_ = 0;
+    state_.desiredColumn_ = 0;
+    lastDoubleClickTick_ = 0;
+    state_.undoStack_.clear();
+    state_.redoStack_.clear();
+    state_.initialized_ = true;
     RebuildLineIndex();
     UpdateScrollbars();
     ResetCaretBlink();
@@ -210,8 +262,8 @@ void EditorView::RefreshDocumentMetrics() {
     // mapped file grew on disk). Recompute derived state without resetting the
     // caret, selection, scroll position, or undo history.
     const std::size_t length = DocumentLength();
-    caret_ = std::min(caret_, length);
-    anchor_ = std::min(anchor_, length);
+    state_.caret_ = std::min(state_.caret_, length);
+    state_.anchor_ = std::min(state_.anchor_, length);
     InvalidateVisualRowCache();
     UpdateScrollbars();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -327,8 +379,8 @@ void EditorView::SetWordWrap(bool enabled) {
 
     wordWrap_ = enabled;
     InvalidateVisualRowCache();
-    horizontalColumn_ = 0;
-    firstVisualRow_ = VisualRowIndexForPosition(caret_);
+    state_.horizontalColumn_ = 0;
+    state_.firstVisualRow_ = VisualRowIndexForPosition(state_.caret_);
     if (wordWrap_) {
         ShowScrollBar(hwnd_, SB_HORZ, FALSE);
     }
@@ -369,9 +421,9 @@ void EditorView::SelectRange(std::size_t start, std::size_t length) {
     }
 
     const std::size_t documentLength = DocumentLength();
-    anchor_ = std::min(start, documentLength);
-    caret_ = std::min(anchor_ + length, documentLength);
-    desiredColumn_ = Column();
+    state_.anchor_ = std::min(start, documentLength);
+    state_.caret_ = std::min(state_.anchor_ + length, documentLength);
+    state_.desiredColumn_ = Column();
     ScrollToCaret();
     ResetCaretBlink();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -379,11 +431,11 @@ void EditorView::SelectRange(std::size_t start, std::size_t length) {
 }
 
 bool EditorView::CanUndo() const noexcept {
-    return !readOnly_ && !undoStack_.empty();
+    return !readOnly_ && !state_.undoStack_.empty();
 }
 
 bool EditorView::CanRedo() const noexcept {
-    return !readOnly_ && !redoStack_.empty();
+    return !readOnly_ && !state_.redoStack_.empty();
 }
 
 bool EditorView::IsReadOnly() const noexcept {
@@ -391,28 +443,28 @@ bool EditorView::IsReadOnly() const noexcept {
 }
 
 bool EditorView::HasSelection() const noexcept {
-    return caret_ != anchor_;
+    return state_.caret_ != state_.anchor_;
 }
 
 std::size_t EditorView::CaretPosition() const noexcept {
-    return caret_;
+    return state_.caret_;
 }
 
 std::size_t EditorView::SelectionStart() const noexcept {
-    return std::min(caret_, anchor_);
+    return std::min(state_.caret_, state_.anchor_);
 }
 
 std::size_t EditorView::SelectionEnd() const noexcept {
-    return std::max(caret_, anchor_);
+    return std::max(state_.caret_, state_.anchor_);
 }
 
 std::size_t EditorView::Line() const {
-    return LineFromPosition(caret_);
+    return LineFromPosition(state_.caret_);
 }
 
 std::size_t EditorView::Column() const {
     const std::size_t line = Line();
-    return caret_ - LineStart(line);
+    return state_.caret_ - LineStart(line);
 }
 
 std::size_t EditorView::LineCount() const noexcept {
@@ -484,6 +536,10 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
+        if (wParam == kDragScrollTimerId) {
+            OnDragScrollTimer();
+            return 0;
+        }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT) {
@@ -533,6 +589,15 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     case WM_LBUTTONUP:
         ReleaseMouseDrag();
         return 0;
+    case WM_CAPTURECHANGED:
+        if (reinterpret_cast<HWND>(lParam) != hwnd_) {
+            KillTimer(hwnd_, kDragScrollTimerId);
+            dragging_ = false;
+        }
+        return 0;
+    case WM_CANCELMODE:
+        ReleaseMouseDrag();
+        return 0;
     case WM_MOUSEWHEEL:
         OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
@@ -547,7 +612,7 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         info.fMask = SIF_ALL;
         GetScrollInfo(hwnd_, SB_VERT, &info);
 
-        std::size_t next = wordWrap_ ? firstVisualRow_ : firstLine_;
+        std::size_t next = wordWrap_ ? state_.firstVisualRow_ : state_.firstLine_;
         switch (LOWORD(wParam)) {
         case SB_LINEUP:
             next = next > 0 ? next - 1 : 0;
@@ -568,18 +633,18 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             break;
         }
 
+        const std::size_t visibleRows = VisibleRowCount();
         if (wordWrap_) {
-            const std::size_t visibleLines = std::max<std::size_t>(1, static_cast<std::size_t>(ClientHeightDips() / std::max(1.0f, lineHeight_)));
-            firstVisualRow_ = std::min(next, MaxFirstVisualRow(visibleLines));
+            state_.firstVisualRow_ = std::min(next, MaxFirstVisualRow(visibleRows));
         } else {
-            firstLine_ = std::min(next, IndexedLineCount() - 1);
+            state_.firstLine_ = std::min(next, MaxFirstLogicalLine(visibleRows));
         }
         UpdateScrollPositions();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     }
     case WM_HSCROLL: {
-        std::size_t next = horizontalColumn_;
+        std::size_t next = state_.horizontalColumn_;
         switch (LOWORD(wParam)) {
         case SB_LINELEFT:
             next = next > 0 ? next - 1 : 0;
@@ -605,7 +670,7 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             break;
         }
 
-        horizontalColumn_ = next;
+        state_.horizontalColumn_ = std::min(next, MaxHorizontalScrollColumn());
         UpdateScrollPositions();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
@@ -633,12 +698,12 @@ void EditorView::Paint() {
     impl_->target->Clear(ToD2DColor(theme_.background));
 
     const std::size_t visibleRows = static_cast<std::size_t>(std::ceil(height / lineHeight_)) + 1;
-    const std::size_t firstRow = wordWrap_ ? firstVisualRow_ : firstLine_;
+    const std::size_t firstRow = wordWrap_ ? state_.firstVisualRow_ : state_.firstLine_;
     const std::size_t totalRows = wordWrap_ ? TotalVisualRows() : IndexedLineCount();
     const std::size_t lastRow = std::min(totalRows, firstRow + visibleRows);
     const std::size_t selectionStart = SelectionStart();
     const std::size_t selectionEnd = SelectionEnd();
-    const float xOrigin = wordWrap_ ? textLeft : textLeft - (static_cast<float>(horizontalColumn_) * charWidth_);
+    const float xOrigin = wordWrap_ ? textLeft : textLeft - (static_cast<float>(state_.horizontalColumn_) * charWidth_);
     const std::size_t wrapColumns = WrapColumnCount();
     bool haveHighlightedLine = false;
     std::size_t highlightedLine = 0;
@@ -756,11 +821,11 @@ void EditorView::Paint() {
     }
 
     if (hasTextClip && GetFocus() == hwnd_ && caretVisible_) {
-        const std::size_t caretRow = wordWrap_ ? VisualRowIndexForPosition(caret_) : LineFromPosition(caret_);
+        const std::size_t caretRow = wordWrap_ ? VisualRowIndexForPosition(state_.caret_) : LineFromPosition(state_.caret_);
         if (caretRow >= firstRow && caretRow < lastRow) {
             const VisualRow visual = wordWrap_ ? VisualRowFromIndex(caretRow) : VisualRow{caretRow, 0, LineLength(caretRow)};
             const std::size_t segmentStart = LineStart(visual.line) + visual.columnStart;
-            const float x = xOrigin + (static_cast<float>(caret_ - segmentStart) * charWidth_);
+            const float x = xOrigin + (static_cast<float>(state_.caret_ - segmentStart) * charWidth_);
             const float y = topPadding + (static_cast<float>(caretRow - firstRow) * lineHeight_);
             impl_->target->DrawLine(D2D1::Point2F(x, y), D2D1::Point2F(x, y + lineHeight_), impl_->caretBrush.Get(), 1.0f);
         }
@@ -934,12 +999,12 @@ void EditorView::OnDpiChanged(UINT dpi) {
 void EditorView::RebuildLineIndex() {
     // Mapped and large documents carry their own line index. Only the editable
     // UTF-16 buffer uses this local index, updated incrementally on each edit.
-    lineIndex_.Reset(document_ != nullptr ? document_->Text() : L"");
+    state_.lineIndex_.Reset(document_ != nullptr ? document_->Text() : L"");
     InvalidateVisualRowCache();
 }
 
 void EditorView::UpdateLineIndexForEdit(std::size_t position, std::wstring_view erased, std::wstring_view inserted) {
-    lineIndex_.ApplyEdit(position, erased, inserted);
+    state_.lineIndex_.ApplyEdit(position, erased, inserted);
     InvalidateVisualRowCache();
 }
 
@@ -983,9 +1048,16 @@ void EditorView::UpdateScrollbars() {
         return;
     }
 
-    const int visibleLines = std::max(1, static_cast<int>(ClientHeightDips() / std::max(1.0f, lineHeight_)));
+    const std::size_t visibleRowCount = VisibleRowCount();
+    const int visibleLines = static_cast<int>(std::min<std::size_t>(visibleRowCount, static_cast<std::size_t>(INT_MAX)));
     const std::size_t totalRows = wordWrap_ ? TotalVisualRows() : IndexedLineCount();
     const int totalLines = std::max(1, static_cast<int>(std::min<std::size_t>(totalRows, static_cast<std::size_t>(INT_MAX))));
+
+    if (wordWrap_) {
+        state_.firstVisualRow_ = std::min(state_.firstVisualRow_, MaxFirstVisualRow(visibleRowCount));
+    } else {
+        state_.firstLine_ = std::min(state_.firstLine_, MaxFirstLogicalLine(visibleRowCount));
+    }
 
     SCROLLINFO vertical{};
     vertical.cbSize = sizeof(vertical);
@@ -993,7 +1065,7 @@ void EditorView::UpdateScrollbars() {
     vertical.nMin = 0;
     vertical.nMax = totalLines - 1;
     vertical.nPage = static_cast<UINT>(visibleLines);
-    vertical.nPos = static_cast<int>(std::min(wordWrap_ ? firstVisualRow_ : firstLine_, totalRows - 1));
+    vertical.nPos = static_cast<int>(std::min(wordWrap_ ? state_.firstVisualRow_ : state_.firstLine_, totalRows - 1));
     SetScrollInfo(hwnd_, SB_VERT, &vertical, TRUE);
 
     if (wordWrap_) {
@@ -1003,15 +1075,15 @@ void EditorView::UpdateScrollbars() {
 
     const std::size_t maxLineLength = IndexedMaxLineLength();
     const int visibleColumns = std::max(1, static_cast<int>(TextViewportWidthDips() / std::max(1.0f, charWidth_)));
-    if (maxLineLength <= static_cast<std::size_t>(visibleColumns)) {
-        horizontalColumn_ = 0;
+    const std::size_t maxScrollPosition = MaxHorizontalScrollColumn();
+    if (maxScrollPosition == 0) {
+        state_.horizontalColumn_ = 0;
         ShowScrollBar(hwnd_, SB_HORZ, FALSE);
         return;
     }
 
     ShowScrollBar(hwnd_, SB_HORZ, TRUE);
-    const std::size_t maxScrollPosition = maxLineLength - static_cast<std::size_t>(visibleColumns) + 1;
-    horizontalColumn_ = std::min(horizontalColumn_, maxScrollPosition);
+    state_.horizontalColumn_ = std::min(state_.horizontalColumn_, maxScrollPosition);
 
     SCROLLINFO horizontal{};
     horizontal.cbSize = sizeof(horizontal);
@@ -1019,7 +1091,7 @@ void EditorView::UpdateScrollbars() {
     horizontal.nMin = 0;
     horizontal.nMax = static_cast<int>(std::min<std::size_t>(maxLineLength, INT_MAX));
     horizontal.nPage = static_cast<UINT>(visibleColumns);
-    horizontal.nPos = static_cast<int>(horizontalColumn_);
+    horizontal.nPos = static_cast<int>(state_.horizontalColumn_);
     SetScrollInfo(hwnd_, SB_HORZ, &horizontal, TRUE);
 }
 
@@ -1028,10 +1100,10 @@ void EditorView::UpdateScrollPositions() {
         return;
     }
 
-    const std::size_t verticalPosition = wordWrap_ ? firstVisualRow_ : firstLine_;
+    const std::size_t verticalPosition = wordWrap_ ? state_.firstVisualRow_ : state_.firstLine_;
     SetScrollPos(hwnd_, SB_VERT, static_cast<int>(std::min<std::size_t>(verticalPosition, static_cast<std::size_t>(INT_MAX))), TRUE);
     if (!wordWrap_) {
-        SetScrollPos(hwnd_, SB_HORZ, static_cast<int>(std::min<std::size_t>(horizontalColumn_, static_cast<std::size_t>(INT_MAX))), TRUE);
+        SetScrollPos(hwnd_, SB_HORZ, static_cast<int>(std::min<std::size_t>(state_.horizontalColumn_, static_cast<std::size_t>(INT_MAX))), TRUE);
     }
 }
 
@@ -1062,33 +1134,33 @@ void EditorView::ResetCaretBlink() {
 }
 
 void EditorView::ScrollToCaret() {
-    const std::size_t caretLine = LineFromPosition(caret_);
-    const std::size_t visibleLines = std::max<std::size_t>(1, static_cast<std::size_t>(ClientHeightDips() / std::max(1.0f, lineHeight_)));
+    const std::size_t caretLine = LineFromPosition(state_.caret_);
+    const std::size_t visibleLines = VisibleRowCount();
 
     if (wordWrap_) {
-        const std::size_t caretRow = VisualRowIndexForPosition(caret_);
-        if (caretRow < firstVisualRow_) {
-            firstVisualRow_ = caretRow;
-        } else if (caretRow >= firstVisualRow_ + visibleLines) {
-            firstVisualRow_ = caretRow - visibleLines + 1;
+        const std::size_t caretRow = VisualRowIndexForPosition(state_.caret_);
+        if (caretRow < state_.firstVisualRow_) {
+            state_.firstVisualRow_ = caretRow;
+        } else if (caretRow >= state_.firstVisualRow_ + visibleLines) {
+            state_.firstVisualRow_ = caretRow - visibleLines + 1;
         }
-        firstVisualRow_ = std::min(firstVisualRow_, MaxFirstVisualRow(visibleLines));
+        state_.firstVisualRow_ = std::min(state_.firstVisualRow_, MaxFirstVisualRow(visibleLines));
         UpdateScrollbars();
         return;
     }
 
-    if (caretLine < firstLine_) {
-        firstLine_ = caretLine;
-    } else if (caretLine >= firstLine_ + visibleLines) {
-        firstLine_ = caretLine - visibleLines + 1;
+    if (caretLine < state_.firstLine_) {
+        state_.firstLine_ = caretLine;
+    } else if (caretLine >= state_.firstLine_ + visibleLines) {
+        state_.firstLine_ = caretLine - visibleLines + 1;
     }
 
-    const std::size_t column = caret_ - LineStart(caretLine);
+    const std::size_t column = state_.caret_ - LineStart(caretLine);
     const std::size_t visibleColumns = std::max<std::size_t>(1, static_cast<std::size_t>(TextViewportWidthDips() / std::max(1.0f, charWidth_)));
-    if (column < horizontalColumn_) {
-        horizontalColumn_ = column;
-    } else if (column >= horizontalColumn_ + visibleColumns) {
-        horizontalColumn_ = column - visibleColumns + 1;
+    if (column < state_.horizontalColumn_) {
+        state_.horizontalColumn_ = column;
+    } else if (column >= state_.horizontalColumn_ + visibleColumns) {
+        state_.horizontalColumn_ = column - visibleColumns + 1;
     }
 
     UpdateScrollbars();
@@ -1096,11 +1168,11 @@ void EditorView::ScrollToCaret() {
 
 void EditorView::SetCaret(std::size_t position, bool extendSelection) {
     const std::size_t length = DocumentLength();
-    caret_ = std::min(position, length);
+    state_.caret_ = std::min(position, length);
     if (!extendSelection) {
-        anchor_ = caret_;
+        state_.anchor_ = state_.caret_;
     }
-    desiredColumn_ = CaretDisplayColumn();
+    state_.desiredColumn_ = CaretDisplayColumn();
     ScrollToCaret();
     ResetCaretBlink();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1113,25 +1185,25 @@ void EditorView::MoveCaretHorizontal(int delta, bool extendSelection) {
         return;
     }
 
-    if (delta < 0 && caret_ > 0) {
-        SetCaret(caret_ - 1, extendSelection);
-    } else if (delta > 0 && HasDocument() && caret_ < DocumentLength()) {
-        SetCaret(caret_ + 1, extendSelection);
+    if (delta < 0 && state_.caret_ > 0) {
+        SetCaret(state_.caret_ - 1, extendSelection);
+    } else if (delta > 0 && HasDocument() && state_.caret_ < DocumentLength()) {
+        SetCaret(state_.caret_ + 1, extendSelection);
     }
 }
 
 void EditorView::MoveCaretVertical(int delta, bool extendSelection) {
     if (wordWrap_) {
-        const std::size_t currentRow = VisualRowIndexForPosition(caret_);
+        const std::size_t currentRow = VisualRowIndexForPosition(state_.caret_);
         const std::size_t totalRows = TotalVisualRows();
         const std::size_t nextRow = delta < 0
                                         ? (currentRow > 0 ? currentRow - 1 : 0)
                                         : std::min(currentRow + 1, totalRows - 1);
         const VisualRow visual = VisualRowFromIndex(nextRow);
-        const std::size_t column = std::min(desiredColumn_, visual.length);
-        caret_ = LineStart(visual.line) + visual.columnStart + column;
+        const std::size_t column = std::min(state_.desiredColumn_, visual.length);
+        state_.caret_ = LineStart(visual.line) + visual.columnStart + column;
         if (!extendSelection) {
-            anchor_ = caret_;
+            state_.anchor_ = state_.caret_;
         }
         ScrollToCaret();
         ResetCaretBlink();
@@ -1144,11 +1216,11 @@ void EditorView::MoveCaretVertical(int delta, bool extendSelection) {
     const std::size_t nextLine = delta < 0
                                      ? (line > 0 ? line - 1 : 0)
                                      : std::min(line + 1, IndexedLineCount() - 1);
-    const std::size_t column = std::min(desiredColumn_, LineLength(nextLine));
+    const std::size_t column = std::min(state_.desiredColumn_, LineLength(nextLine));
     const std::size_t next = PositionFromLineColumn(nextLine, column);
-    caret_ = next;
+    state_.caret_ = next;
     if (!extendSelection) {
-        anchor_ = caret_;
+        state_.anchor_ = state_.caret_;
     }
     ScrollToCaret();
     ResetCaretBlink();
@@ -1177,8 +1249,8 @@ void EditorView::DeleteSelectionOrRange(bool backspace) {
 
     const std::size_t documentLength = DocumentLength();
     if (backspace) {
-        if (caret_ > 0) {
-            std::size_t position = caret_ - 1;
+        if (state_.caret_ > 0) {
+            std::size_t position = state_.caret_ - 1;
             std::size_t length = 1;
             if (DocumentCharAt(position) == L'\n' && position > 0 && DocumentCharAt(position - 1) == L'\r') {
                 --position;
@@ -1186,12 +1258,12 @@ void EditorView::DeleteSelectionOrRange(bool backspace) {
             }
             ApplyEdit(position, length, L"", true);
         }
-    } else if (caret_ < documentLength) {
+    } else if (state_.caret_ < documentLength) {
         std::size_t length = 1;
-        if (DocumentCharAt(caret_) == L'\r' && caret_ + 1 < documentLength && DocumentCharAt(caret_ + 1) == L'\n') {
+        if (DocumentCharAt(state_.caret_) == L'\r' && state_.caret_ + 1 < documentLength && DocumentCharAt(state_.caret_ + 1) == L'\n') {
             length = 2;
         }
-        ApplyEdit(caret_, length, L"", true);
+        ApplyEdit(state_.caret_, length, L"", true);
     }
 }
 
@@ -1216,11 +1288,11 @@ void EditorView::ApplyEdit(std::size_t position, std::size_t eraseLength, std::w
         return;
     }
 
-    const std::size_t caretBefore = caret_;
+    const std::size_t caretBefore = state_.caret_;
     BackendEdit edit = BackendReplace(position, eraseLength, insertText);
-    caret_ = edit.position + edit.insertedUnits;
-    anchor_ = caret_;
-    desiredColumn_ = CaretDisplayColumn();
+    state_.caret_ = edit.position + edit.insertedUnits;
+    state_.anchor_ = state_.caret_;
+    state_.desiredColumn_ = CaretDisplayColumn();
     ScrollToCaret();
     UpdateScrollbars();
     ResetCaretBlink();
@@ -1233,9 +1305,9 @@ void EditorView::ApplyEdit(std::size_t position, std::size_t eraseLength, std::w
         action.erasedUnits = edit.erasedUnits;
         action.insertedUnits = edit.insertedUnits;
         action.caretBefore = caretBefore;
-        action.caretAfter = caret_;
+        action.caretAfter = state_.caret_;
         PushUndo(std::move(action));
-        redoStack_.clear();
+        state_.redoStack_.clear();
         NotifyChanged();
     }
 
@@ -1269,9 +1341,9 @@ EditorView::BackendEdit EditorView::BackendReplace(
 }
 
 void EditorView::PushUndo(EditAction action) {
-    undoStack_.push_back(std::move(action));
-    if (undoStack_.size() > kMaxUndoActions) {
-        undoStack_.erase(undoStack_.begin());
+    state_.undoStack_.push_back(std::move(action));
+    if (state_.undoStack_.size() > kMaxUndoActions) {
+        state_.undoStack_.erase(state_.undoStack_.begin());
     }
 }
 
@@ -1415,7 +1487,16 @@ void EditorView::OnMouseDoubleClick(int x, int y) {
 }
 
 void EditorView::OnMouseMove(int x, int y) {
-    SetCaret(HitTest(x, y), true);
+    dragPoint_ = {x, y};
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    const bool outside = x < client.left || x >= client.right || y < client.top || y >= client.bottom;
+    if (outside) {
+        SetTimer(hwnd_, kDragScrollTimerId, kDragScrollIntervalMs, nullptr);
+    } else {
+        KillTimer(hwnd_, kDragScrollTimerId);
+    }
+    UpdateDragSelection(x, y);
 }
 
 void EditorView::OnMouseWheel(short delta) {
@@ -1426,34 +1507,94 @@ void EditorView::OnMouseWheel(short delta) {
 
     const int lines = std::max(1, std::abs(delta) / WHEEL_DELTA * 3);
     if (wordWrap_) {
-        const std::size_t visibleLines = std::max<std::size_t>(1, static_cast<std::size_t>(ClientHeightDips() / std::max(1.0f, lineHeight_)));
+        const std::size_t visibleLines = VisibleRowCount();
         if (delta > 0) {
-            firstVisualRow_ = firstVisualRow_ > static_cast<std::size_t>(lines) ? firstVisualRow_ - static_cast<std::size_t>(lines) : 0;
+            state_.firstVisualRow_ = state_.firstVisualRow_ > static_cast<std::size_t>(lines) ? state_.firstVisualRow_ - static_cast<std::size_t>(lines) : 0;
         } else {
-            firstVisualRow_ = std::min(firstVisualRow_ + static_cast<std::size_t>(lines), MaxFirstVisualRow(visibleLines));
+            state_.firstVisualRow_ = std::min(state_.firstVisualRow_ + static_cast<std::size_t>(lines), MaxFirstVisualRow(visibleLines));
         }
     } else {
+        const std::size_t maximum = MaxFirstLogicalLine(VisibleRowCount());
         if (delta > 0) {
-            firstLine_ = firstLine_ > static_cast<std::size_t>(lines) ? firstLine_ - static_cast<std::size_t>(lines) : 0;
+            state_.firstLine_ = state_.firstLine_ > static_cast<std::size_t>(lines) ? state_.firstLine_ - static_cast<std::size_t>(lines) : 0;
         } else {
-            firstLine_ = std::min(firstLine_ + static_cast<std::size_t>(lines), IndexedLineCount() - 1);
+            state_.firstLine_ = std::min(state_.firstLine_ + static_cast<std::size_t>(lines), maximum);
         }
     }
     UpdateScrollPositions();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void EditorView::OnDragScrollTimer() {
+    if (!dragging_ || GetCapture() != hwnd_) {
+        KillTimer(hwnd_, kDragScrollTimerId);
+        return;
+    }
+    UpdateDragSelection(dragPoint_.x, dragPoint_.y);
+}
+
+void EditorView::UpdateDragSelection(int x, int y) {
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client) || client.right <= client.left || client.bottom <= client.top) {
+        return;
+    }
+
+    const int rowPixels = std::max(1, static_cast<int>(std::lround(lineHeight_ * DpiScale())));
+    const int columnPixels = std::max(1, static_cast<int>(std::lround(charWidth_ * DpiScale())));
+    auto scrollAmount = [](int distance, int unit) {
+        return static_cast<std::size_t>(std::clamp(1 + distance / std::max(1, unit), 1, 8));
+    };
+
+    const std::size_t visibleRows = VisibleRowCount();
+    std::size_t& verticalPosition = wordWrap_ ? state_.firstVisualRow_ : state_.firstLine_;
+    const std::size_t maximumVertical =
+        wordWrap_ ? MaxFirstVisualRow(visibleRows) : MaxFirstLogicalLine(visibleRows);
+    if (y < client.top) {
+        const std::size_t amount = scrollAmount(client.top - y, rowPixels);
+        verticalPosition = verticalPosition > amount ? verticalPosition - amount : 0;
+    } else if (y >= client.bottom) {
+        const std::size_t amount = scrollAmount(y - client.bottom + 1, rowPixels);
+        verticalPosition = std::min(verticalPosition + amount, maximumVertical);
+    }
+
+    if (!wordWrap_) {
+        const std::size_t maximumHorizontal = MaxHorizontalScrollColumn();
+        if (x < client.left) {
+            const std::size_t amount = scrollAmount(client.left - x, columnPixels);
+            state_.horizontalColumn_ = state_.horizontalColumn_ > amount ? state_.horizontalColumn_ - amount : 0;
+        } else if (x >= client.right) {
+            const std::size_t amount = scrollAmount(x - client.right + 1, columnPixels);
+            state_.horizontalColumn_ = std::min(state_.horizontalColumn_ + amount, maximumHorizontal);
+        }
+    }
+
+    UpdateScrollbars();
+    UpdateScrollPositions();
+
+    const int clientRight = static_cast<int>(client.right);
+    const int clientBottom = static_cast<int>(client.bottom);
+    const int textLeft = static_cast<int>(std::ceil(TextLeftDips() * DpiScale()));
+    const int hitX = std::clamp(x, std::min(textLeft, clientRight - 1), clientRight - 1);
+    const int topPadding = static_cast<int>(std::lround(static_cast<float>(kTopPadding) * DpiScale()));
+    const int hitY = std::clamp(y, std::min(topPadding, clientBottom - 1), clientBottom - 1);
+    SetCaret(HitTest(hitX, hitY), true);
+}
+
 void EditorView::CaptureMouseDrag() {
     if (!dragging_) {
+        dragPoint_ = {};
         SetCapture(hwnd_);
         dragging_ = true;
     }
 }
 
 void EditorView::ReleaseMouseDrag() {
+    KillTimer(hwnd_, kDragScrollTimerId);
     if (dragging_) {
-        ReleaseCapture();
         dragging_ = false;
+        if (GetCapture() == hwnd_) {
+            ReleaseCapture();
+        }
     }
 }
 
@@ -1505,7 +1646,7 @@ std::size_t EditorView::IndexedLineCount() const noexcept {
     if (largeDocument_ != nullptr) {
         return largeDocument_->LineCount();
     }
-    return lineIndex_.LineCount();
+    return state_.lineIndex_.LineCount();
 }
 
 std::size_t EditorView::IndexedMaxLineLength() const noexcept {
@@ -1515,7 +1656,7 @@ std::size_t EditorView::IndexedMaxLineLength() const noexcept {
     if (largeDocument_ != nullptr) {
         return largeDocument_->MaxLineLength();
     }
-    return lineIndex_.MaxLineLength();
+    return state_.lineIndex_.MaxLineLength();
 }
 
 std::size_t EditorView::HitTest(int x, int y) const {
@@ -1523,15 +1664,15 @@ std::size_t EditorView::HitTest(int x, int y) const {
     const float yDip = PixelsToDips(y);
     const int lineOffset = std::max(0, static_cast<int>((yDip - static_cast<float>(kTopPadding)) / lineHeight_));
     if (wordWrap_) {
-        const VisualRow visual = VisualRowFromIndex(firstVisualRow_ + static_cast<std::size_t>(lineOffset));
+        const VisualRow visual = VisualRowFromIndex(state_.firstVisualRow_ + static_cast<std::size_t>(lineOffset));
         const int rawColumn = static_cast<int>(std::round((xDip - TextLeftDips()) / charWidth_));
         const std::size_t column = visual.columnStart + static_cast<std::size_t>(std::max(0, rawColumn));
         return PositionFromLineColumn(visual.line, std::min(column, visual.columnStart + visual.length));
     }
 
-    const std::size_t line = std::min(firstLine_ + static_cast<std::size_t>(lineOffset), IndexedLineCount() - 1);
+    const std::size_t line = std::min(state_.firstLine_ + static_cast<std::size_t>(lineOffset), IndexedLineCount() - 1);
     const int rawColumn = static_cast<int>(std::round((xDip - TextLeftDips()) / charWidth_));
-    const std::size_t column = static_cast<std::size_t>(std::max(0, rawColumn)) + horizontalColumn_;
+    const std::size_t column = static_cast<std::size_t>(std::max(0, rawColumn)) + state_.horizontalColumn_;
     return PositionFromLineColumn(line, std::min(column, LineLength(line)));
 }
 
@@ -1542,7 +1683,7 @@ std::size_t EditorView::LineStart(std::size_t line) const {
     if (largeDocument_ != nullptr) {
         return largeDocument_->LineStart(line);
     }
-    return lineIndex_.LineStart(line);
+    return state_.lineIndex_.LineStart(line);
 }
 
 std::size_t EditorView::LineEnd(std::size_t line) const {
@@ -1575,7 +1716,7 @@ std::size_t EditorView::LineFromPosition(std::size_t position) const {
     if (largeDocument_ != nullptr) {
         return largeDocument_->LineFromPosition(position);
     }
-    return lineIndex_.LineFromPosition(position);
+    return state_.lineIndex_.LineFromPosition(position);
 }
 
 std::size_t EditorView::PositionFromLineColumn(std::size_t line, std::size_t column) const {
@@ -1739,6 +1880,29 @@ std::size_t EditorView::MaxFirstVisualRow(std::size_t visibleRows) const {
     return totalRows > visibleRows ? totalRows - visibleRows : 0;
 }
 
+std::size_t EditorView::VisibleRowCount() const {
+    const float availableHeight = std::max(0.0f, ClientHeightDips() - static_cast<float>(kTopPadding));
+    return std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(availableHeight / std::max(1.0f, lineHeight_)));
+}
+
+std::size_t EditorView::MaxFirstLogicalLine(std::size_t visibleRows) const {
+    const std::size_t lineCount = IndexedLineCount();
+    return lineCount > visibleRows ? lineCount - visibleRows : 0;
+}
+
+std::size_t EditorView::MaxHorizontalScrollColumn() const {
+    if (wordWrap_) {
+        return 0;
+    }
+    const std::size_t maxLineLength = IndexedMaxLineLength();
+    const std::size_t visibleColumns = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(TextViewportWidthDips() / std::max(1.0f, charWidth_)));
+    return maxLineLength > visibleColumns ? maxLineLength - visibleColumns + 1 : 0;
+}
+
 std::size_t EditorView::CaretDisplayColumn() const {
     const std::size_t column = Column();
     return wordWrap_ ? column % WrapColumnCount() : column;
@@ -1866,15 +2030,15 @@ void EditorView::Undo() {
         return;
     }
 
-    EditAction action = std::move(undoStack_.back());
-    undoStack_.pop_back();
+    EditAction action = std::move(state_.undoStack_.back());
+    state_.undoStack_.pop_back();
     // Reverse the edit: remove the inserted span and restore the erased text.
     BackendReplace(action.position, action.insertedUnits, action.erased);
-    caret_ = action.caretBefore;
-    anchor_ = caret_;
+    state_.caret_ = action.caretBefore;
+    state_.anchor_ = state_.caret_;
     ScrollToCaret();
     ResetCaretBlink();
-    redoStack_.push_back(std::move(action));
+    state_.redoStack_.push_back(std::move(action));
     NotifyChanged();
     InvalidateRect(hwnd_, nullptr, FALSE);
     NotifyCursorChanged();
@@ -1885,15 +2049,15 @@ void EditorView::Redo() {
         return;
     }
 
-    EditAction action = std::move(redoStack_.back());
-    redoStack_.pop_back();
+    EditAction action = std::move(state_.redoStack_.back());
+    state_.redoStack_.pop_back();
     // Reapply the edit: remove the erased span and insert the recorded text.
     BackendReplace(action.position, action.erasedUnits, action.inserted);
-    caret_ = action.caretAfter;
-    anchor_ = caret_;
+    state_.caret_ = action.caretAfter;
+    state_.anchor_ = state_.caret_;
     ScrollToCaret();
     ResetCaretBlink();
-    undoStack_.push_back(std::move(action));
+    state_.undoStack_.push_back(std::move(action));
     NotifyChanged();
     InvalidateRect(hwnd_, nullptr, FALSE);
     NotifyCursorChanged();
@@ -1952,14 +2116,14 @@ void EditorView::DuplicateLine() {
         return;
     }
 
-    const std::size_t line = LineFromPosition(caret_);
+    const std::size_t line = LineFromPosition(state_.caret_);
     const std::size_t start = LineStart(line);
-    const std::size_t column = caret_ - start;
+    const std::size_t column = state_.caret_ - start;
     std::wstring text = DocumentTextRange(start, LineEnd(line) - start);
 
     // Insert the copy above so the caret stays on the original line's text.
     ApplyEdit(start, 0, text + LineBreakForLine(line), true);
-    SetCaret(caret_ + column, false);
+    SetCaret(state_.caret_ + column, false);
 }
 
 void EditorView::DeleteLine() {
@@ -1968,9 +2132,9 @@ void EditorView::DeleteLine() {
     }
 
     const std::size_t lineCount = IndexedLineCount();
-    const std::size_t line = LineFromPosition(caret_);
+    const std::size_t line = LineFromPosition(state_.caret_);
     const std::size_t start = LineStart(line);
-    const std::size_t column = caret_ - start;
+    const std::size_t column = state_.caret_ - start;
 
     std::size_t eraseStart = start;
     std::size_t eraseEnd;
@@ -1990,7 +2154,7 @@ void EditorView::DeleteLine() {
 
     ApplyEdit(eraseStart, eraseEnd - eraseStart, L"", true);
 
-    const std::size_t newLine = LineFromPosition(caret_);
+    const std::size_t newLine = LineFromPosition(state_.caret_);
     SetCaret(std::min(LineStart(newLine) + column, LineEnd(newLine)), false);
 }
 
@@ -1999,12 +2163,12 @@ void EditorView::MoveLineUp() {
         return;
     }
 
-    const std::size_t line = LineFromPosition(caret_);
+    const std::size_t line = LineFromPosition(state_.caret_);
     if (line == 0) {
         return;
     }
 
-    const std::size_t column = caret_ - LineStart(line);
+    const std::size_t column = state_.caret_ - LineStart(line);
     SwapAdjacentLines(line - 1);
     SetCaret(std::min(LineStart(line - 1) + column, LineEnd(line - 1)), false);
 }
@@ -2014,12 +2178,12 @@ void EditorView::MoveLineDown() {
         return;
     }
 
-    const std::size_t line = LineFromPosition(caret_);
+    const std::size_t line = LineFromPosition(state_.caret_);
     if (line + 1 >= IndexedLineCount()) {
         return;
     }
 
-    const std::size_t column = caret_ - LineStart(line);
+    const std::size_t column = state_.caret_ - LineStart(line);
     SwapAdjacentLines(line);
     SetCaret(std::min(LineStart(line + 1) + column, LineEnd(line + 1)), false);
 }
@@ -2059,8 +2223,8 @@ void EditorView::SelectAll() {
         return;
     }
 
-    anchor_ = 0;
-    caret_ = DocumentLength();
+    state_.anchor_ = 0;
+    state_.caret_ = DocumentLength();
     ScrollToCaret();
     ResetCaretBlink();
     InvalidateRect(hwnd_, nullptr, FALSE);

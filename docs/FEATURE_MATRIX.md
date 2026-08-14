@@ -7,15 +7,16 @@ in [Usage](USAGE.md); this page is the inventory.
 
 | Feature | Notes |
 | --- | --- |
-| New | Prompts to save a modified document |
-| Open | Common file dialog, drag-and-drop, and command-line path |
+| New Tab | `Ctrl+N` or the tab-strip `+` button; existing work remains open |
+| Open | Common file dialog, multi-file drag-and-drop, and multiple command-line paths; duplicate paths activate their existing tab |
 | Text file associations | Open With registration for common plain-text/data extensions; Windows still requires confirmation for the default choice |
 | Save | Preserves the detected encoding and line endings |
 | Save As | Native dialog with an encoding picker |
+| Close Tab | `Ctrl+W`, close button, or middle-click; prompts only for that tab's unsaved work |
 | Recent Files | Eight entries in the File menu, persisted; missing files are pruned when opened |
 | Page Setup | Native dialog; margins persist |
 | Print | Native dialog; pagination and spooling on a worker thread |
-| Exit | Prompts to save a modified document |
+| Exit | Saves the tab session, including unsaved content, and closes without per-tab prompts |
 
 ## Edit
 
@@ -47,6 +48,8 @@ in [Usage](USAGE.md); this page is the inventory.
 | Zoom | 10%–500% in 10% steps via `Ctrl`+wheel, `Ctrl+Plus/Minus`, `Ctrl+0`; scales rendering only, not the saved font size |
 | Follow Tail | `F6`; follows appended content and keeps the caret at the end |
 | Syntax highlighting | Line-local color highlighting for JSON, INI/configuration, Markdown, and XML; plain text and large-file backends use the fast single-brush renderer |
+| Tabs | One shared editor/render target; compact rounded surfaces, adjacent New Tab control, antialiased controls, optional persisted tab-bar visibility, and per-tab backend, undo/redo, caret, selection, scroll, dirty state, Follow Tail, and recovery |
+| Drag-selection autoscroll | Captured selections continue scrolling vertically or horizontally while the pointer is held outside the editor |
 
 ## Help and System Integration
 
@@ -69,7 +72,8 @@ in [Usage](USAGE.md); this page is the inventory.
 | Large-file viewing | Read-only mapped backend above 512 MB |
 | Large-file editing | Opt-in piece-table-over-mmap backend supporting typing, paste, undo/redo, find, and atomic save |
 | External change detection | On window activation, prompts to reload a file changed on disk, warning before discarding unsaved edits |
-| Crash recovery | Dirty documents are journaled to `%LOCALAPPDATA%\NativePad\Recovery`; abandoned journals are offered for restore on the next launch |
+| Session restore | Normal exit persists tab order, active tab, paths, formats, Follow Tail state, and unsaved normal/large-file content under `%LOCALAPPDATA%\NativePad\Session` |
+| Crash recovery | Dirty tabs have independent journals under `%LOCALAPPDATA%\NativePad\Recovery`; every abandoned journal can restore into its own tab |
 
 ## Known Limitations
 
@@ -78,6 +82,7 @@ in [Usage](USAGE.md); this page is the inventory.
 - Byte-backed mapped and large-file backends report byte columns, and caret
   navigation over them is not grapheme-aware.
 - Editable large files support neither printing, nor crash-recovery journaling,
-  nor encoding conversion on Save As.
+  nor encoding conversion on Save As. Their edits are preserved by normal-exit
+  session restore.
 - Print fidelity against classic Notepad still needs broader manual testing.
 - Releases are unsigned, so SmartScreen warns on first run.

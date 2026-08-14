@@ -97,6 +97,30 @@ void RunUntitledJournalRoundTrip(const std::wstring& root) {
     Expect(claimed->text == snapshot.text, "untitled text matches");
 }
 
+void RunMultipleTabJournals(const std::wstring& root) {
+    const DWORD deadProcess = DeadProcessId();
+    NativePad::RecoverySnapshot first;
+    first.originalPath = L"C:\\notes\\first.txt";
+    first.text = L"first tab";
+    NativePad::RecoverySnapshot second;
+    second.originalPath = L"C:\\notes\\second.txt";
+    second.text = L"second tab";
+
+    NativePad::RecoveryJournal firstJournal(root, deadProcess, 1);
+    NativePad::RecoveryJournal secondJournal(root, deadProcess, 2);
+    Expect(firstJournal.Save(first), "first tab journal save");
+    Expect(secondJournal.Save(second), "second tab journal save");
+
+    auto claimedA = NativePad::RecoveryJournal::ClaimAbandoned(root);
+    auto claimedB = NativePad::RecoveryJournal::ClaimAbandoned(root);
+    Expect(claimedA.has_value() && claimedB.has_value(), "both tab journals claimed");
+    const bool bothFound =
+        (claimedA->text == first.text && claimedB->text == second.text) ||
+        (claimedA->text == second.text && claimedB->text == first.text);
+    Expect(bothFound, "tab journals remain independent");
+    Expect(!NativePad::RecoveryJournal::ClaimAbandoned(root).has_value(), "all tab journals removed");
+}
+
 } // namespace
 
 void RunRecoveryJournalTests() {
@@ -108,6 +132,7 @@ void RunRecoveryJournalTests() {
         RunAbandonedJournalRoundTrip(root);
         RunLiveJournalIsNotClaimed(root);
         RunUntitledJournalRoundTrip(root);
+        RunMultipleTabJournals(root);
     } catch (...) {
         std::filesystem::remove_all(root, ec);
         throw;

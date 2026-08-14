@@ -26,6 +26,7 @@
 #include "AboutDialog.h"
 #include "DefaultEditor.h"
 #include "DocumentBuffer.h"
+#include "DocumentSession.h"
 #include "EditorView.h"
 #include "FileCodec.h"
 #include "FindReplaceDialog.h"
@@ -39,6 +40,8 @@
 #include "RecoveryJournal.h"
 #include "resource.h"
 #include "Settings.h"
+#include "SessionStore.h"
+#include "TabStrip.h"
 #include "TextFormat.h"
 #include "UpdateChecker.h"
 #include "UiSupport.h"
@@ -71,13 +74,6 @@ constexpr UINT kRecoverySaveDelayMs = 3000;
 
 constexpr size_t kMaxRecentFiles = ID_FILE_RECENT_LAST - ID_FILE_RECENT_FIRST + 1;
 
-// Size plus last write time is enough to notice external edits without keeping
-// a change-notification handle open on the containing directory.
-struct FileStamp {
-    ULONGLONG size{0};
-    FILETIME writeTime{};
-};
-
 std::optional<FileStamp> QueryFileStamp(const std::wstring& path) {
     if (path.empty()) {
         return std::nullopt;
@@ -105,6 +101,29 @@ std::wstring BaseName(std::wstring_view path) {
     }
 
     return std::wstring(path.substr(pos + 1));
+}
+
+std::wstring FullPath(std::wstring_view path) {
+    if (path.empty()) {
+        return {};
+    }
+    const DWORD required = GetFullPathNameW(std::wstring(path).c_str(), 0, nullptr, nullptr);
+    if (required == 0) {
+        return std::wstring(path);
+    }
+    std::wstring result(required, L'\0');
+    const DWORD written = GetFullPathNameW(std::wstring(path).c_str(), required, result.data(), nullptr);
+    if (written == 0 || written >= required) {
+        return std::wstring(path);
+    }
+    result.resize(written);
+    return result;
+}
+
+bool SamePath(std::wstring_view left, std::wstring_view right) {
+    const std::wstring fullLeft = FullPath(left);
+    const std::wstring fullRight = FullPath(right);
+    return CompareStringOrdinal(fullLeft.c_str(), -1, fullRight.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
 bool TextMatchesAt(std::wstring_view text, std::wstring_view needle, size_t position, bool matchCase) {
@@ -178,6 +197,7 @@ public:
           darkMode_(IsSystemDarkMode()) {
         LoadPreferences();
         effectiveDarkMode_ = ConfigureNativeTheme(darkMode_, !darkModeForced_);
+        AddEmptySession(false);
     }
 
     ~AppWindow() {
@@ -297,6 +317,350 @@ public:
     }
 
 private:
+    NativePad::DocumentSession& ActiveSession() {
+        for (auto& tab : tabs_) {
+            if (tab->id == activeTabId_) {
+                return *tab;
+            }
+        }
+        return *tabs_.front();
+    }
+
+    const NativePad::DocumentSession& ActiveSession() const {
+        for (const auto& tab : tabs_) {
+            if (tab->id == activeTabId_) {
+                return *tab;
+            }
+        }
+        return *tabs_.front();
+    }
+
+    NativePad::DocumentSession* SessionById(NativePad::TabId id) const {
+        for (const auto& tab : tabs_) {
+            if (tab->id == id) {
+                return tab.get();
+            }
+        }
+        return nullptr;
+    }
+
+    NativePad::DocumentSession* SessionWithPath(std::wstring_view path, NativePad::TabId exclude = 0) const {
+        if (path.empty()) {
+            return nullptr;
+        }
+        for (const auto& tab : tabs_) {
+            if (tab->id != exclude && !tab->currentPath.empty() && SamePath(tab->currentPath, path)) {
+                return tab.get();
+            }
+        }
+        return nullptr;
+    }
+
+    size_t SessionIndex(NativePad::TabId id) const {
+        for (size_t i = 0; i < tabs_.size(); ++i) {
+            if (tabs_[i]->id == id) {
+                return i;
+            }
+        }
+        return tabs_.size();
+    }
+
+    std::wstring SessionTitle(const NativePad::DocumentSession& session) const {
+        if (!session.currentPath.empty()) {
+            return BaseName(session.currentPath);
+        }
+        if (session.untitledNumber <= 1) {
+            return kUntitled;
+        }
+        return std::wstring(kUntitled) + L" " + std::to_wstring(session.untitledNumber);
+    }
+
+    std::uint64_t NextUntitledNumber() const {
+        std::uint64_t candidate = 1;
+        while (std::any_of(tabs_.begin(), tabs_.end(), [&](const auto& tab) {
+            return tab->currentPath.empty() && tab->untitledNumber == candidate;
+        })) {
+            ++candidate;
+        }
+        return candidate;
+    }
+
+    NativePad::TabId AddEmptySession(bool activate) {
+        auto session = std::make_unique<NativePad::DocumentSession>(nextTabId_++);
+        session->untitledNumber = NextUntitledNumber();
+        const NativePad::TabId id = session->id;
+        tabs_.push_back(std::move(session));
+
+        if (activeTabId_ == 0) {
+            activeTabId_ = id;
+        } else if (activate) {
+            ActivateTab(id);
+        }
+        RefreshTabStrip();
+        return id;
+    }
+
+    void RefreshTabStrip() {
+        if (tabStrip_.Hwnd() == nullptr) {
+            return;
+        }
+        std::vector<NativePad::TabStripItem> items;
+        items.reserve(tabs_.size());
+        for (const auto& tab : tabs_) {
+            items.push_back({tab->id, SessionTitle(*tab), tab->currentPath, tab->dirty});
+        }
+        tabStrip_.SetItems(std::move(items), activeTabId_);
+    }
+
+    void AttachActiveSession() {
+        auto& session = ActiveSession();
+        if (session.mappedDocument != nullptr) {
+            editorView_.SetMappedDocument(session.mappedDocument.get(), std::move(session.editorState));
+        } else if (session.largeDocument != nullptr) {
+            editorView_.SetLargeDocument(session.largeDocument.get(), std::move(session.editorState));
+        } else {
+            editorView_.SetDocument(&session.document, std::move(session.editorState));
+        }
+        editorView_.SetReadOnly(session.readOnlyPreview || session.followTail);
+        editorView_.SetSyntaxLanguage(session.syntaxLanguage);
+    }
+
+    bool ActivateTab(NativePad::TabId id) {
+        if (id == activeTabId_) {
+            return true;
+        }
+        if (SessionById(id) == nullptr) {
+            return false;
+        }
+
+        if (editor_ != nullptr) {
+            if (ActiveSession().recoverySavePending) {
+                PersistRecoverySnapshot();
+            }
+            KillTimer(hwnd_, kTailTimerId);
+            ActiveSession().editorState = editorView_.TakeState();
+        }
+
+        activeTabId_ = id;
+        if (editor_ != nullptr) {
+            AttachActiveSession();
+            if (ActiveSession().followTail) {
+                SetTimer(hwnd_, kTailTimerId, kTailTimerIntervalMs, nullptr);
+                OnTailTimer();
+            }
+            UpdateTitle();
+            UpdateStatus();
+            RefreshTabStrip();
+            SetFocus(editor_);
+            PostMessageW(hwnd_, WM_NATIVEPAD_FILE_CHANGE_CHECK, 0, 0);
+        }
+        return true;
+    }
+
+    void ActivateRelativeTab(int direction) {
+        if (tabs_.size() < 2) {
+            return;
+        }
+        const size_t current = SessionIndex(activeTabId_);
+        const size_t count = tabs_.size();
+        const size_t next = direction < 0 ? (current + count - 1) % count : (current + 1) % count;
+        ActivateTab(tabs_[next]->id);
+    }
+
+    bool CloseTab(NativePad::TabId id) {
+        if (SessionById(id) == nullptr || !ActivateTab(id)) {
+            return false;
+        }
+        if (!ConfirmSaveIfDirty()) {
+            return false;
+        }
+
+        StopFollowTail();
+        CancelRecoveryJournal();
+        KillTimer(hwnd_, kRecoveryTimerId);
+        static_cast<void>(editorView_.TakeState());
+
+        const size_t closingIndex = SessionIndex(id);
+        const std::wstring sessionBackingPath = ActiveSession().sessionBackingPath;
+        tabs_.erase(tabs_.begin() + static_cast<std::ptrdiff_t>(closingIndex));
+        if (!sessionBackingPath.empty()) {
+            DeleteFileW(sessionBackingPath.c_str());
+        }
+        if (tabs_.empty()) {
+            AddEmptySession(false);
+        }
+        const size_t nextIndex = std::min(closingIndex, tabs_.size() - 1);
+        activeTabId_ = tabs_[nextIndex]->id;
+        AttachActiveSession();
+        if (ActiveSession().followTail) {
+            SetTimer(hwnd_, kTailTimerId, kTailTimerIntervalMs, nullptr);
+            OnTailTimer();
+        }
+        UpdateTitle();
+        UpdateStatus();
+        RefreshTabStrip();
+        SetFocus(editor_);
+        return true;
+    }
+
+    void ClearAllRecoveryJournals() {
+        KillTimer(hwnd_, kRecoveryTimerId);
+        for (auto& tab : tabs_) {
+            tab->recoverySavePending = false;
+            tab->recovery.Clear();
+        }
+    }
+
+    bool PersistSessionState() {
+        NativePad::SessionState state;
+        state.activeIndex = SessionIndex(activeTabId_);
+        state.tabs.reserve(tabs_.size());
+
+        for (const auto& tab : tabs_) {
+            NativePad::SessionTabState saved;
+            saved.kind = tab->mappedDocument != nullptr
+                             ? NativePad::SessionDocumentKind::Mapped
+                             : (tab->largeDocument != nullptr ? NativePad::SessionDocumentKind::LargeEditable
+                                                              : NativePad::SessionDocumentKind::Normal);
+            saved.untitledNumber = tab->untitledNumber;
+            saved.currentPath = tab->currentPath;
+            saved.encoding = tab->documentEncoding;
+            saved.lineEnding = tab->documentLineEnding;
+            saved.dirty = tab->dirty;
+            saved.readOnlyPreview = tab->readOnlyPreview;
+            saved.followTail = tab->followTail;
+            if (saved.kind == NativePad::SessionDocumentKind::Normal &&
+                (saved.dirty || saved.currentPath.empty())) {
+                saved.text = tab->document.Text();
+            }
+            state.tabs.push_back(std::move(saved));
+        }
+
+        std::wstring error;
+        const bool saved = sessionStore_.Save(
+            state,
+            [&](std::size_t tabIndex, const std::wstring& targetPath, std::wstring& writerError) {
+                if (tabIndex >= tabs_.size() || tabs_[tabIndex]->largeDocument == nullptr) {
+                    writerError = L"The large-file tab is no longer available.";
+                    return false;
+                }
+                return tabs_[tabIndex]->largeDocument->SaveTo(targetPath, writerError);
+            },
+            error);
+        if (!saved) {
+            ShowAppMessage(
+                L"NativePad could not remember the open tabs, so it will remain open.\n\n" + error,
+                MessageDialogIcon::Error,
+                L"NativePad Session");
+        }
+        return saved;
+    }
+
+    bool RestoreSessionTab(const NativePad::SessionTabState& saved) {
+        auto& session = ActiveSession();
+        session.untitledNumber = saved.untitledNumber;
+
+        if (saved.kind == NativePad::SessionDocumentKind::Normal && saved.hasTextSnapshot) {
+            session.currentPath = saved.currentPath;
+            session.documentEncoding = saved.encoding;
+            session.documentLineEnding = saved.lineEnding;
+            session.encodingLabel = NativePad::EncodingLabel(saved.encoding);
+            session.fileByteCount = FileByteCountForPath(saved.currentPath).value_or(0);
+            session.previewDecodedByteCount = saved.text.size() * sizeof(wchar_t);
+            SetEditorText(saved.text, saved.readOnlyPreview);
+            SetSyntaxLanguageForPath(saved.currentPath);
+            session.dirty = saved.dirty;
+            RecordFileStamp();
+        } else if (saved.kind == NativePad::SessionDocumentKind::LargeEditable) {
+            const std::wstring sourcePath =
+                saved.largeSnapshotPath.empty() ? saved.currentPath : saved.largeSnapshotPath;
+            auto large = std::make_unique<NativePad::LargeTextDocument>();
+            std::wstring error;
+            if (sourcePath.empty() || !large->Open(sourcePath, error)) {
+                return false;
+            }
+
+            session.currentPath = saved.currentPath;
+            session.encodingLabel = large->EncodingLabel();
+            session.documentEncoding = large->Encoding();
+            session.documentLineEnding = large->DetectedLineEnding();
+            session.fileByteCount = large->FileByteCount();
+            SetLargeEditorDocument(std::move(large));
+            session.sessionBackingPath = saved.largeSnapshotPath;
+            session.syntaxLanguage = SyntaxLanguage::PlainText;
+            editorView_.SetSyntaxLanguage(session.syntaxLanguage);
+            session.dirty = saved.dirty;
+            RecordFileStamp();
+        } else {
+            if (saved.currentPath.empty() || !OpenDocumentIntoActive(saved.currentPath)) {
+                return false;
+            }
+            session.untitledNumber = saved.untitledNumber;
+        }
+
+        session.followTail = saved.followTail && !session.currentPath.empty();
+        editorView_.SetReadOnly(session.readOnlyPreview || session.followTail);
+        UpdateTitle();
+        UpdateStatus();
+        RefreshTabStrip();
+        return true;
+    }
+
+    void RestorePreviousSession() {
+        NativePad::SessionState state;
+        std::wstring error;
+        const NativePad::SessionLoadStatus status = sessionStore_.LoadAndConsume(state, error);
+        if (status == NativePad::SessionLoadStatus::NotFound) {
+            return;
+        }
+        if (status == NativePad::SessionLoadStatus::Failed) {
+            ShowAppMessage(
+                L"NativePad could not restore the previous tab session.\n\n" + error,
+                MessageDialogIcon::Warning,
+                L"NativePad Session");
+            sessionStore_.Clear();
+            return;
+        }
+
+        std::vector<NativePad::TabId> restoredIds(state.tabs.size(), 0);
+        bool restoredAny = false;
+        for (std::size_t i = 0; i < state.tabs.size(); ++i) {
+            const bool createdTab = restoredAny;
+            if (createdTab) {
+                AddEmptySession(true);
+            }
+            const NativePad::TabId candidate = activeTabId_;
+            if (RestoreSessionTab(state.tabs[i])) {
+                restoredIds[i] = candidate;
+                restoredAny = true;
+            } else if (createdTab) {
+                CloseTab(candidate);
+            }
+        }
+
+        if (!restoredAny) {
+            return;
+        }
+        NativePad::TabId target =
+            state.activeIndex < restoredIds.size() ? restoredIds[state.activeIndex] : 0;
+        if (target == 0) {
+            const auto first = std::find_if(restoredIds.begin(), restoredIds.end(), [](NativePad::TabId id) {
+                return id != 0;
+            });
+            target = first != restoredIds.end() ? *first : activeTabId_;
+        }
+
+        const bool alreadyActive = target == activeTabId_;
+        ActivateTab(target);
+        if (alreadyActive && ActiveSession().followTail) {
+            SetTimer(hwnd_, kTailTimerId, kTailTimerIntervalMs, nullptr);
+            OnTailTimer();
+        }
+        UpdateTitle();
+        UpdateStatus();
+        RefreshTabStrip();
+    }
+
     void LoadPreferences() {
         // NativePad stores only UI/editor preferences. Document metadata remains
         // per-file state so opening an ANSI file cannot change the default for a
@@ -318,6 +682,9 @@ private:
         }
         if (auto visible = ReadSettingsDword(L"StatusBarVisible")) {
             statusBarVisible_ = *visible != 0;
+        }
+        if (auto visible = ReadSettingsDword(L"TabBarVisible")) {
+            tabBarVisible_ = *visible != 0;
         }
 
         if (auto family = ReadSettingsString(L"FontFamily"); family && !family->empty()) {
@@ -374,6 +741,7 @@ private:
         WriteSettingsDword(L"WordWrap", editorView_.WordWrap() ? 1u : 0u);
         WriteSettingsDword(L"LineNumbers", editorView_.ShowLineNumbers() ? 1u : 0u);
         WriteSettingsDword(L"StatusBarVisible", statusBarVisible_ ? 1u : 0u);
+        WriteSettingsDword(L"TabBarVisible", tabBarVisible_ ? 1u : 0u);
         WriteSettingsInt(L"MarginLeft", pageMarginsThousandths_.left);
         WriteSettingsInt(L"MarginTop", pageMarginsThousandths_.top);
         WriteSettingsInt(L"MarginRight", pageMarginsThousandths_.right);
@@ -413,7 +781,7 @@ private:
             return false;
         }
 
-        return true;
+        return NativePad::TabStrip::Register(instance_);
     }
 
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -474,9 +842,11 @@ private:
             OnDpiChanged(HIWORD(wParam), reinterpret_cast<RECT*>(lParam));
             return 0;
         case NativePad::WM_EDITOR_CHANGED:
-            dirty_ = true;
+            if (!ActiveSession().dirty) {
+                ActiveSession().dirty = true;
+                UpdateTitle();
+            }
             ScheduleRecoverySave();
-            UpdateTitle();
             UpdateStatus();
             return 0;
         case NativePad::WM_EDITOR_CURSOR_CHANGED:
@@ -515,6 +885,15 @@ private:
             return 0;
         case WM_NATIVEPAD_UPDATE_DOWNLOAD_COMPLETE:
             OnUpdateDownloadComplete(reinterpret_cast<UpdateDownloadResult*>(lParam));
+            return 0;
+        case NativePad::WM_TABSTRIP_ACTIVATE:
+            ActivateTab(static_cast<NativePad::TabId>(wParam));
+            return 0;
+        case NativePad::WM_TABSTRIP_CLOSE:
+            CloseTab(static_cast<NativePad::TabId>(wParam));
+            return 0;
+        case NativePad::WM_TABSTRIP_NEW:
+            AddEmptySession(true);
             return 0;
         case WM_COMMAND:
             OnCommand(LOWORD(wParam), HIWORD(wParam), reinterpret_cast<HWND>(lParam));
@@ -557,7 +936,7 @@ private:
         case WM_SETCURSOR:
             if (LOWORD(lParam) == HTCLIENT) {
                 const HWND target = reinterpret_cast<HWND>(wParam);
-                if (target == hwnd_ || target == status_ || target == menuStrip_) {
+                if (target == hwnd_ || target == status_ || target == menuStrip_ || target == tabStrip_.Hwnd()) {
                     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
                     return TRUE;
                 }
@@ -589,10 +968,8 @@ private:
             OnDropFiles(reinterpret_cast<HDROP>(wParam));
             return 0;
         case WM_CLOSE:
-            if (ConfirmSaveIfDirty()) {
-                // The user saved or knowingly discarded the document, so the
-                // journal must not resurrect it on the next launch.
-                CancelRecoveryJournal();
+            if (PersistSessionState()) {
+                ClearAllRecoveryJournals();
                 SavePreferences();
                 DestroyWindow(hwnd_);
             }
@@ -635,7 +1012,12 @@ private:
             return -1;
         }
 
-        if (!editorView_.Create(hwnd_, instance_, &document_)) {
+        if (!tabStrip_.Create(hwnd_, instance_)) {
+            ShowAppMessage(L"Could not create the tab strip.", MessageDialogIcon::Error);
+            return -1;
+        }
+
+        if (!editorView_.Create(hwnd_, instance_, &ActiveSession().document)) {
             ShowAppMessage(L"Could not create the DirectWrite editor view.", MessageDialogIcon::Error);
             return -1;
         }
@@ -666,8 +1048,13 @@ private:
         editorView_.SetFont(preferredFont_);
         editorView_.SetShowLineNumbers(preferredLineNumbers_);
         editorView_.SetWordWrap(preferredWordWrap_);
+        tabStrip_.OnDpiChanged(dpi_);
+        tabStrip_.SetFont(UiFont());
+        RefreshTabStrip();
+        ShowWindow(tabStrip_.Hwnd(), tabBarVisible_ ? SW_SHOW : SW_HIDE);
         ShowWindow(status_, statusBarVisible_ ? SW_SHOW : SW_HIDE);
         ApplyTheme();
+        RestorePreviousSession();
         UpdateTitle();
         UpdateStatus();
         Layout();
@@ -726,6 +1113,7 @@ private:
         AppendMenuCommand(viewMenu_, ID_VIEW_ZOOM_OUT);
         AppendMenuCommand(viewMenu_, ID_VIEW_ZOOM_RESET);
         AppendMenuSeparator(viewMenu_);
+        AppendMenuCommand(viewMenu_, ID_VIEW_TAB_BAR);
         AppendMenuCommand(viewMenu_, ID_VIEW_LINE_NUMBERS);
         AppendMenuCommand(viewMenu_, ID_VIEW_STATUS_BAR);
         AppendMenuCommand(viewMenu_, ID_VIEW_DARK_MODE);
@@ -755,6 +1143,7 @@ private:
         AppendMenuCommand(fileMenu_, ID_FILE_OPEN);
         AppendMenuCommand(fileMenu_, ID_FILE_SAVE);
         AppendMenuCommand(fileMenu_, ID_FILE_SAVE_AS);
+        AppendMenuCommand(fileMenu_, ID_FILE_CLOSE_TAB);
         AppendMenuSeparator(fileMenu_);
         AppendMenuCommand(fileMenu_, ID_FILE_PAGE_SETUP);
         AppendMenuCommand(fileMenu_, ID_FILE_PRINT);
@@ -775,7 +1164,7 @@ private:
         }
 
         std::erase_if(recentFiles_, [&](const std::wstring& existing) {
-            return _wcsicmp(existing.c_str(), path.c_str()) == 0;
+            return SamePath(existing, path);
         });
         recentFiles_.insert(recentFiles_.begin(), path);
         if (recentFiles_.size() > kMaxRecentFiles) {
@@ -790,15 +1179,11 @@ private:
         }
 
         const std::wstring path = recentFiles_[index];
-        if (!ConfirmSaveIfDirty()) {
-            return;
-        }
-
         if (!OpenDocument(path)) {
             // The open failed (the error dialog already ran); drop the stale
             // entry so the menu only lists files that can still be opened.
             std::erase_if(recentFiles_, [&](const std::wstring& existing) {
-                return _wcsicmp(existing.c_str(), path.c_str()) == 0;
+                return SamePath(existing, path);
             });
             RebuildFileMenu();
         }
@@ -827,6 +1212,9 @@ private:
             break;
         case ID_FILE_SAVE_AS:
             SaveDocument(true);
+            break;
+        case ID_FILE_CLOSE_TAB:
+            CloseTab(activeTabId_);
             break;
         case ID_FILE_PAGE_SETUP:
             ShowPageSetupDialog();
@@ -906,6 +1294,9 @@ private:
             ShowWindow(status_, statusBarVisible_ ? SW_SHOW : SW_HIDE);
             Layout();
             break;
+        case ID_VIEW_TAB_BAR:
+            ToggleTabBar();
+            break;
         case ID_VIEW_LINE_NUMBERS:
             editorView_.SetShowLineNumbers(!editorView_.ShowLineNumbers());
             InvalidateRect(menuStrip_, nullptr, FALSE);
@@ -927,6 +1318,12 @@ private:
             break;
         case ID_VIEW_ZOOM_RESET:
             editorView_.SetZoomPercent(100);
+            break;
+        case ID_VIEW_NEXT_TAB:
+            ActivateRelativeTab(1);
+            break;
+        case ID_VIEW_PREVIOUS_TAB:
+            ActivateRelativeTab(-1);
             break;
         case ID_HELP_DEFAULT_EDITOR:
             SetAsDefaultEditor();
@@ -1027,7 +1424,7 @@ private:
     }
 
     void ShowReplaceDialog() {
-        if (readOnlyPreview_) {
+        if (ActiveSession().readOnlyPreview) {
             return;
         }
 
@@ -1118,11 +1515,11 @@ private:
             return;
         }
 
-        if (mappedDocument_ != nullptr) {
+        if (ActiveSession().mappedDocument != nullptr) {
             const size_t start = down ? editorView_.SelectionEnd() : editorView_.SelectionStart();
-            std::optional<NativePad::MappedTextDocument::Match> match = mappedDocument_->Find(lastFindText_, start, down, lastFindMatchCase_);
+            std::optional<NativePad::MappedTextDocument::Match> match = ActiveSession().mappedDocument->Find(lastFindText_, start, down, lastFindMatchCase_);
             if (!match) {
-                match = mappedDocument_->Find(lastFindText_, down ? 0 : mappedDocument_->Length(), down, lastFindMatchCase_);
+                match = ActiveSession().mappedDocument->Find(lastFindText_, down ? 0 : ActiveSession().mappedDocument->Length(), down, lastFindMatchCase_);
             }
 
             if (!match) {
@@ -1137,7 +1534,7 @@ private:
             return;
         }
 
-        if (document_.Length() == 0) {
+        if (ActiveSession().document.Length() == 0) {
             ShowFindNotFound();
             return;
         }
@@ -1145,9 +1542,9 @@ private:
         // Search the piece table directly instead of materializing the whole
         // document on every Find Next.
         const size_t start = down ? editorView_.SelectionEnd() : editorView_.SelectionStart();
-        std::optional<size_t> match = document_.Find(lastFindText_, start, down, lastFindMatchCase_);
+        std::optional<size_t> match = ActiveSession().document.Find(lastFindText_, start, down, lastFindMatchCase_);
         if (!match) {
-            match = document_.Find(lastFindText_, down ? 0 : document_.Length(), down, lastFindMatchCase_);
+            match = ActiveSession().document.Find(lastFindText_, down ? 0 : ActiveSession().document.Length(), down, lastFindMatchCase_);
         }
 
         if (!match) {
@@ -1162,7 +1559,7 @@ private:
     }
 
     bool SelectionMatchesFind() const {
-        if (mappedDocument_ != nullptr || lastFindText_.empty() || !editorView_.HasSelection()) {
+        if (ActiveSession().mappedDocument != nullptr || lastFindText_.empty() || !editorView_.HasSelection()) {
             return false;
         }
 
@@ -1174,18 +1571,18 @@ private:
 
         // Compare only the selected span instead of materializing the whole
         // document; the selection length already equals the search term length.
-        const std::wstring selected = document_.TextRange(start, length);
+        const std::wstring selected = ActiveSession().document.TextRange(start, length);
         return TextMatchesAt(selected, lastFindText_, 0, lastFindMatchCase_);
     }
 
     void ReplaceAll() {
         // Replace All is intentionally limited to editable documents because it
         // rebuilds the full string and then resets the piece table.
-        if (readOnlyPreview_ || lastFindText_.empty()) {
+        if (ActiveSession().readOnlyPreview || lastFindText_.empty()) {
             return;
         }
 
-        const std::wstring text = document_.Text();
+        const std::wstring text = ActiveSession().document.Text();
         // Build the result in a single linear pass. Repeated in-place
         // std::wstring::replace shifts the tail on every hit (quadratic when the
         // replacement length differs); appending unchanged spans avoids that.
@@ -1209,7 +1606,7 @@ private:
 
         result.append(text, copied, text.size() - copied);
         SetEditorText(result);
-        dirty_ = true;
+        ActiveSession().dirty = true;
         UpdateTitle();
         UpdateStatus();
         SetFocus(editor_);
@@ -1332,12 +1729,12 @@ private:
 
         std::wstring message = L"NativePad ";
         message += result->update.version;
-        message += L" has been downloaded.\n\nSave any open work and run the installer now?";
+        message += L" has been downloaded.\n\nRun the installer now? Your open tabs will be restored afterward.";
         if (ShowAppMessage(message, MessageDialogIcon::Question, L"NativePad Update", MessageDialogButtons::YesNo, IDYES) != IDYES) {
             return;
         }
 
-        if (!ConfirmSaveIfDirty()) {
+        if (!PersistSessionState()) {
             return;
         }
 
@@ -1353,12 +1750,14 @@ private:
             nullptr,
             SW_SHOWNORMAL));
         if (launchResult <= 32) {
+            sessionStore_.Clear();
             std::wstring message = L"Could not launch the installer:\n\n";
             message += GetLastErrorText(static_cast<DWORD>(launchResult));
             ShowAppMessage(message, MessageDialogIcon::Error, L"NativePad Update");
             return;
         }
 
+        ClearAllRecoveryJournals();
         SavePreferences();
         DestroyWindow(hwnd_);
     }
@@ -1367,6 +1766,13 @@ private:
         editorView_.SetWordWrap(!editorView_.WordWrap());
         UpdateStatus();
         InvalidateRect(menuStrip_, nullptr, FALSE);
+        SetFocus(editor_);
+    }
+
+    void ToggleTabBar() {
+        tabBarVisible_ = !tabBarVisible_;
+        ShowWindow(tabStrip_.Hwnd(), tabBarVisible_ ? SW_SHOW : SW_HIDE);
+        Layout();
         SetFocus(editor_);
     }
 
@@ -1394,7 +1800,7 @@ private:
     }
 
     void ShowPrintDialog() {
-        if (readOnlyPreview_) {
+        if (ActiveSession().readOnlyPreview) {
             const wchar_t* message = IsMappedLargeFile()
                                          ? L"Printing is disabled for read-only mapped large files."
                                          : L"Printing is disabled for read-only large-file previews.";
@@ -1419,7 +1825,7 @@ private:
         PrintJob job{};
         job.owner = hwnd_;
         job.printerDc = print.hDC;
-        job.documentName = currentPath_.empty() ? L"Untitled - NativePad" : currentPath_;
+        job.documentName = ActiveSession().currentPath.empty() ? L"Untitled - NativePad" : ActiveSession().currentPath;
         job.text = EditorText();
         job.font = LogFontFromEditorFont(editorView_.Font(), static_cast<UINT>(std::max(1, GetDeviceCaps(print.hDC, LOGPIXELSY))));
         job.marginsThousandths = pageMarginsThousandths_;
@@ -1536,6 +1942,7 @@ private:
         if (status_ != nullptr) {
             SendMessageW(status_, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
         }
+        tabStrip_.SetFont(uiFont_);
     }
 
     void OnDpiChanged(UINT dpi, const RECT* suggestedRect) {
@@ -1553,6 +1960,7 @@ private:
 
         RefreshUiFont();
         editorView_.OnDpiChanged(dpi_);
+        tabStrip_.OnDpiChanged(dpi_);
         Layout();
         UpdateStatus();
         InvalidateRect(menuStrip_, nullptr, TRUE);
@@ -1603,13 +2011,15 @@ private:
 
         switch (id) {
         case ID_FILE_NEW:
-            return L"&New\tCtrl+N";
+            return L"&New Tab\tCtrl+N";
         case ID_FILE_OPEN:
             return L"&Open...\tCtrl+O";
         case ID_FILE_SAVE:
             return L"&Save\tCtrl+S";
         case ID_FILE_SAVE_AS:
             return L"Save &As...\tCtrl+Shift+S";
+        case ID_FILE_CLOSE_TAB:
+            return L"&Close Tab\tCtrl+W";
         case ID_FILE_PAGE_SETUP:
             return L"Page Set&up...";
         case ID_FILE_PRINT:
@@ -1660,6 +2070,8 @@ private:
             return L"&Font...";
         case ID_VIEW_STATUS_BAR:
             return L"&Status Bar";
+        case ID_VIEW_TAB_BAR:
+            return L"Ta&b Bar";
         case ID_VIEW_LINE_NUMBERS:
             return L"&Line Numbers";
         case ID_VIEW_DARK_MODE:
@@ -2398,18 +2810,18 @@ private:
     }
 
     size_t DocumentLength() const noexcept {
-        if (largeDocument_ != nullptr) {
-            return largeDocument_->Length();
+        if (ActiveSession().largeDocument != nullptr) {
+            return ActiveSession().largeDocument->Length();
         }
-        return mappedDocument_ != nullptr ? mappedDocument_->Length() : document_.Length();
+        return ActiveSession().mappedDocument != nullptr ? ActiveSession().mappedDocument->Length() : ActiveSession().document.Length();
     }
 
     bool IsMappedLargeFile() const noexcept {
-        return mappedDocument_ != nullptr;
+        return ActiveSession().mappedDocument != nullptr;
     }
 
     bool IsLargeEditable() const noexcept {
-        return largeDocument_ != nullptr;
+        return ActiveSession().largeDocument != nullptr;
     }
 
     void UpdateMenuState(HMENU menu) const {
@@ -2421,7 +2833,7 @@ private:
 
         // Tail following reloads the buffer from disk, so edits (and saves that
         // would race the writer) stay disabled while it is active.
-        const bool canEdit = !readOnlyPreview_ && !followTail_;
+        const bool canEdit = !ActiveSession().readOnlyPreview && !ActiveSession().followTail;
         const bool hasText = DocumentLength() > 0;
         const bool canDelete = canEdit && (editorView_.HasSelection() || editorView_.CaretPosition() < DocumentLength());
 
@@ -2448,13 +2860,14 @@ private:
         EnableMenuItem(menu, ID_FILE_SAVE_AS, MF_BYCOMMAND | (canEdit ? MF_ENABLED : MF_GRAYED));
         // Printing is not supported for read-only previews or editable large
         // files (whole-document pagination would materialize the entire file).
-        EnableMenuItem(menu, ID_FILE_PRINT, MF_BYCOMMAND | (!readOnlyPreview_ && !IsLargeEditable() ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(menu, ID_FILE_PRINT, MF_BYCOMMAND | (!ActiveSession().readOnlyPreview && !IsLargeEditable() ? MF_ENABLED : MF_GRAYED));
         CheckMenuItem(menu, ID_FORMAT_WORD_WRAP, MF_BYCOMMAND | (editorView_.WordWrap() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_LINE_NUMBERS, MF_BYCOMMAND | (editorView_.ShowLineNumbers() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_STATUS_BAR, MF_BYCOMMAND | (statusBarVisible_ ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(menu, ID_VIEW_TAB_BAR, MF_BYCOMMAND | (tabBarVisible_ ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_DARK_MODE, MF_BYCOMMAND | (darkMode_ ? MF_CHECKED : MF_UNCHECKED));
-        EnableMenuItem(menu, ID_VIEW_FOLLOW_TAIL, MF_BYCOMMAND | (!currentPath_.empty() ? MF_ENABLED : MF_GRAYED));
-        CheckMenuItem(menu, ID_VIEW_FOLLOW_TAIL, MF_BYCOMMAND | (followTail_ ? MF_CHECKED : MF_UNCHECKED));
+        EnableMenuItem(menu, ID_VIEW_FOLLOW_TAIL, MF_BYCOMMAND | (!ActiveSession().currentPath.empty() ? MF_ENABLED : MF_GRAYED));
+        CheckMenuItem(menu, ID_VIEW_FOLLOW_TAIL, MF_BYCOMMAND | (ActiveSession().followTail ? MF_CHECKED : MF_UNCHECKED));
 
         // Reflect the current default-editor state, but only query the shell when
         // the Help menu is actually opening so other menus stay cheap.
@@ -2466,7 +2879,7 @@ private:
     void Layout() const {
         // The editor consumes all space between the custom menu strip and status
         // bar. Both heights are DPI-scaled elsewhere.
-        if (menuStrip_ == nullptr || editor_ == nullptr || status_ == nullptr) {
+        if (menuStrip_ == nullptr || tabStrip_.Hwnd() == nullptr || editor_ == nullptr || status_ == nullptr) {
             return;
         }
 
@@ -2474,12 +2887,14 @@ private:
         GetClientRect(hwnd_, &client);
         const int width = static_cast<int>(client.right - client.left);
         const int menuHeight = MenuStripHeight();
+        const int tabHeight = tabBarVisible_ ? tabStrip_.PreferredHeight(dpi_) : 0;
         const int statusHeight = statusBarVisible_ ? StatusBarHeight() : 0;
-        const int editorHeight = std::max(0, static_cast<int>((client.bottom - client.top) - menuHeight - statusHeight));
+        const int editorHeight = std::max(0, static_cast<int>((client.bottom - client.top) - menuHeight - tabHeight - statusHeight));
 
         MoveWindow(menuStrip_, 0, 0, width, menuHeight, TRUE);
-        MoveWindow(editor_, 0, menuHeight, width, editorHeight, TRUE);
-        MoveWindow(status_, 0, menuHeight + editorHeight, width, statusHeight, TRUE);
+        MoveWindow(tabStrip_.Hwnd(), 0, menuHeight, width, tabHeight, TRUE);
+        MoveWindow(editor_, 0, menuHeight + tabHeight, width, editorHeight, TRUE);
+        MoveWindow(status_, 0, menuHeight + tabHeight + editorHeight, width, statusHeight, TRUE);
     }
 
     void ApplyTheme() {
@@ -2490,6 +2905,21 @@ private:
         ApplyDarkFrame(hwnd_, effectiveDarkMode_);
         ApplyDarkControlTheme(editor_, effectiveDarkMode_);
         ApplyDarkControlTheme(status_, effectiveDarkMode_);
+        ApplyDarkControlTheme(tabStrip_.Hwnd(), effectiveDarkMode_);
+
+        tabStrip_.SetTheme({
+            colors.menuBackground,
+            colors.menuBackground,
+            IsHighContrastMode() ? colors.editorBackground :
+                                   (effectiveDarkMode_ ? RGB(43, 43, 43) : RGB(255, 255, 255)),
+            colors.menuHot,
+            colors.menuText,
+            colors.menuDisabledText,
+            colors.separator,
+            IsHighContrastMode() ? colors.menuText :
+                                   (effectiveDarkMode_ ? RGB(76, 156, 255) : RGB(0, 120, 212)),
+            colors.menuPressed,
+        });
 
         editorView_.SetTheme({
             colors.editorBackground,
@@ -2531,6 +2961,7 @@ private:
 
         ApplyMenuBackground();
         InvalidateRect(menuStrip_, nullptr, TRUE);
+        InvalidateRect(tabStrip_.Hwnd(), nullptr, TRUE);
         InvalidateRect(editor_, nullptr, TRUE);
         InvalidateRect(status_, nullptr, TRUE);
         if (findDialog_ != nullptr && IsWindow(findDialog_)) {
@@ -2611,69 +3042,87 @@ private:
         RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     }
 
-    void UpdateTitle() const {
+    void UpdateTitle() {
         std::wstring title;
-        if (dirty_) {
+        if (ActiveSession().dirty) {
             title += L"*";
         }
 
-        title += currentPath_.empty() ? kUntitled : BaseName(currentPath_);
+        title += SessionTitle(ActiveSession());
         if (IsMappedLargeFile()) {
             title += L" [Read-only mapped]";
         } else if (IsLargeEditable()) {
             title += L" [Large file]";
-        } else if (readOnlyPreview_) {
+        } else if (ActiveSession().readOnlyPreview) {
             title += L" [Read-only preview]";
         }
-        if (followTail_) {
+        if (ActiveSession().followTail) {
             title += L" [Tail]";
         }
         title += L" - NativePad";
         SetWindowTextW(hwnd_, title.c_str());
+        RefreshTabStrip();
     }
 
     std::wstring EditorText() const {
-        if (mappedDocument_ != nullptr || largeDocument_ != nullptr) {
+        if (ActiveSession().mappedDocument != nullptr || ActiveSession().largeDocument != nullptr) {
             return {};
         }
-        return document_.Text();
+        return ActiveSession().document.Text();
     }
 
     void SetEditorText(const std::wstring& text, bool readOnlyPreview = false) {
-        mappedDocument_.reset();
-        largeDocument_.reset();
-        document_.Reset(text);
-        readOnlyPreview_ = readOnlyPreview;
-        editorView_.SetDocument(&document_);
-        editorView_.SetReadOnly(readOnlyPreview_);
+        const std::wstring oldSessionBacking = ActiveSession().sessionBackingPath;
+        ActiveSession().mappedDocument.reset();
+        ActiveSession().largeDocument.reset();
+        ActiveSession().sessionBackingPath.clear();
+        if (!oldSessionBacking.empty()) {
+            DeleteFileW(oldSessionBacking.c_str());
+        }
+        ActiveSession().document.Reset(text);
+        ActiveSession().readOnlyPreview = readOnlyPreview;
+        editorView_.SetDocument(&ActiveSession().document);
+        editorView_.SetReadOnly(ActiveSession().readOnlyPreview);
     }
 
     void SetSyntaxLanguageForPath(std::wstring_view path) {
         const TextFileType* type = TextFileTypeForPath(path);
-        editorView_.SetSyntaxLanguage(type != nullptr ? type->syntax : SyntaxLanguage::PlainText);
+        ActiveSession().syntaxLanguage = type != nullptr ? type->syntax : SyntaxLanguage::PlainText;
+        editorView_.SetSyntaxLanguage(ActiveSession().syntaxLanguage);
     }
 
     void SetMappedEditorDocument(std::unique_ptr<NativePad::MappedTextDocument> document) {
         // The mapped backend is view/search-only. Reset the other backends so
         // accidental save/replace paths cannot operate on stale text.
-        document_.Reset();
-        largeDocument_.reset();
-        mappedDocument_ = std::move(document);
-        readOnlyPreview_ = true;
-        previewDecodedByteCount_ = 0;
-        editorView_.SetMappedDocument(mappedDocument_.get());
+        const std::wstring oldSessionBacking = ActiveSession().sessionBackingPath;
+        ActiveSession().document.Reset();
+        ActiveSession().largeDocument.reset();
+        ActiveSession().sessionBackingPath.clear();
+        if (!oldSessionBacking.empty()) {
+            DeleteFileW(oldSessionBacking.c_str());
+        }
+        ActiveSession().mappedDocument = std::move(document);
+        ActiveSession().readOnlyPreview = true;
+        ActiveSession().previewDecodedByteCount = 0;
+        editorView_.SetMappedDocument(ActiveSession().mappedDocument.get());
         editorView_.SetReadOnly(true);
     }
 
     void SetLargeEditorDocument(std::unique_ptr<NativePad::LargeTextDocument> document) {
         // The editable large-file backend keeps the file mapped read-only and
         // stores edits in a piece table over an in-memory add buffer.
-        document_.Reset();
-        mappedDocument_.reset();
-        largeDocument_ = std::move(document);
-        readOnlyPreview_ = false;
-        previewDecodedByteCount_ = 0;
-        editorView_.SetLargeDocument(largeDocument_.get());
+        const std::wstring oldSessionBacking = ActiveSession().sessionBackingPath;
+        ActiveSession().document.Reset();
+        ActiveSession().mappedDocument.reset();
+        ActiveSession().largeDocument.reset();
+        ActiveSession().sessionBackingPath.clear();
+        if (!oldSessionBacking.empty()) {
+            DeleteFileW(oldSessionBacking.c_str());
+        }
+        ActiveSession().largeDocument = std::move(document);
+        ActiveSession().readOnlyPreview = false;
+        ActiveSession().previewDecodedByteCount = 0;
+        editorView_.SetLargeDocument(ActiveSession().largeDocument.get());
         editorView_.SetReadOnly(false);
     }
 
@@ -2696,8 +3145,8 @@ private:
                 line,
                 column,
                 lineCount,
-                encodingLabel_.c_str(),
-                static_cast<unsigned long long>(fileByteCount_ / (1024u * 1024u)),
+                ActiveSession().encodingLabel.c_str(),
+                static_cast<unsigned long long>(ActiveSession().fileByteCount / (1024u * 1024u)),
                 documentLength);
         } else if (IsLargeEditable()) {
             StringCchPrintfW(
@@ -2707,10 +3156,10 @@ private:
                 line,
                 column,
                 lineCount,
-                encodingLabel_.c_str(),
-                static_cast<unsigned long long>(fileByteCount_ / (1024u * 1024u)),
+                ActiveSession().encodingLabel.c_str(),
+                static_cast<unsigned long long>(ActiveSession().fileByteCount / (1024u * 1024u)),
                 documentLength);
-        } else if (readOnlyPreview_) {
+        } else if (ActiveSession().readOnlyPreview) {
             StringCchPrintfW(
                 status,
                 std::size(status),
@@ -2718,9 +3167,9 @@ private:
                 line,
                 column,
                 lineCount,
-                encodingLabel_.c_str(),
-                static_cast<unsigned long long>(previewDecodedByteCount_ / (1024u * 1024u)),
-                static_cast<unsigned long long>(fileByteCount_ / (1024u * 1024u)),
+                ActiveSession().encodingLabel.c_str(),
+                static_cast<unsigned long long>(ActiveSession().previewDecodedByteCount / (1024u * 1024u)),
+                static_cast<unsigned long long>(ActiveSession().fileByteCount / (1024u * 1024u)),
                 documentLength);
         } else {
             StringCchPrintfW(
@@ -2730,25 +3179,26 @@ private:
                 line,
                 column,
                 lineCount,
-                encodingLabel_.c_str(),
+                ActiveSession().encodingLabel.c_str(),
                 documentLength);
         }
 
         statusText_ = status;
         statusText_ += L"    " + std::to_wstring(editorView_.ZoomPercent()) + L"%";
-        if (followTail_) {
+        if (ActiveSession().followTail) {
             statusText_ += L"    FOLLOW TAIL";
         }
         InvalidateRect(status_, nullptr, FALSE);
     }
 
     bool ConfirmSaveIfDirty() {
-        if (!dirty_) {
+        if (!ActiveSession().dirty) {
             return true;
         }
 
+        const std::wstring message = L"Save changes to \"" + SessionTitle(ActiveSession()) + L"\"?";
         const int choice = ShowAppMessage(
-            L"Save changes to this document?",
+            message,
             MessageDialogIcon::Question,
             L"NativePad",
             MessageDialogButtons::YesNoCancel,
@@ -2766,32 +3216,10 @@ private:
     }
 
     void NewDocument() {
-        if (!ConfirmSaveIfDirty()) {
-            return;
-        }
-
-        StopFollowTail();
-        CancelRecoveryJournal();
-        currentPath_.clear();
-        fileStamp_.reset();
-        documentEncoding_ = NativePad::TextEncoding::Utf8;
-        documentLineEnding_ = NativePad::LineEnding::CrLf;
-        encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
-        fileByteCount_ = 0;
-        previewDecodedByteCount_ = 0;
-        SetEditorText(L"");
-        editorView_.SetSyntaxLanguage(SyntaxLanguage::PlainText);
-        dirty_ = false;
-        UpdateTitle();
-        UpdateStatus();
-        SetFocus(editor_);
+        AddEmptySession(true);
     }
 
     void OpenDocumentFromDialog() {
-        if (!ConfirmSaveIfDirty()) {
-            return;
-        }
-
         auto path = ShowOpenDialog(hwnd_);
         if (!path) {
             return;
@@ -2801,9 +3229,27 @@ private:
     }
 
     bool OpenDocument(const std::wstring& path) {
+        for (const auto& tab : tabs_) {
+            if (!tab->currentPath.empty() && SamePath(tab->currentPath, path)) {
+                ActivateTab(tab->id);
+                return true;
+            }
+        }
+
+        const bool reuseActive = ActiveSession().currentPath.empty() && !ActiveSession().dirty &&
+                                 ActiveSession().Length() == 0;
+        const NativePad::TabId target = reuseActive ? activeTabId_ : AddEmptySession(true);
+        const bool opened = OpenDocumentIntoActive(path);
+        if (!opened && !reuseActive) {
+            CloseTab(target);
+        }
+        return opened;
+    }
+
+    bool OpenDocumentIntoActive(const std::wstring& path) {
         // Tail following is a per-file mode; keep it only when the same path is
         // being reloaded (external change or tail refresh), not on a new file.
-        if (followTail_ && path != currentPath_) {
+        if (ActiveSession().followTail && path != ActiveSession().currentPath) {
             StopFollowTail();
         }
 
@@ -2818,19 +3264,21 @@ private:
                 return false;
             }
 
-            currentPath_ = path;
-            encodingLabel_ = mapped->EncodingLabel();
-            documentEncoding_ = NativePad::TextEncoding::Utf8;
-            documentLineEnding_ = NativePad::LineEnding::CrLf;
-            fileByteCount_ = mapped->FileByteCount();
+            ActiveSession().currentPath = path;
+            ActiveSession().encodingLabel = mapped->EncodingLabel();
+            ActiveSession().documentEncoding = NativePad::TextEncoding::Utf8;
+            ActiveSession().documentLineEnding = NativePad::LineEnding::CrLf;
+            ActiveSession().fileByteCount = mapped->FileByteCount();
             SetMappedEditorDocument(std::move(mapped));
-            editorView_.SetSyntaxLanguage(SyntaxLanguage::PlainText);
-            dirty_ = false;
+            ActiveSession().syntaxLanguage = SyntaxLanguage::PlainText;
+            editorView_.SetSyntaxLanguage(ActiveSession().syntaxLanguage);
+            ActiveSession().dirty = false;
             CancelRecoveryJournal();
             RecordFileStamp();
-            AddRecentFile(currentPath_);
+            AddRecentFile(ActiveSession().currentPath);
             UpdateTitle();
             UpdateStatus();
+            RefreshTabStrip();
             SetFocus(editor_);
             return true;
         }
@@ -2842,26 +3290,27 @@ private:
             return false;
         }
 
-        currentPath_ = path;
-        documentEncoding_ = file->encoding;
-        documentLineEnding_ = file->lineEnding;
-        encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
-        fileByteCount_ = file->fileByteCount;
-        previewDecodedByteCount_ = file->decodedByteCount;
+        ActiveSession().currentPath = path;
+        ActiveSession().documentEncoding = file->encoding;
+        ActiveSession().documentLineEnding = file->lineEnding;
+        ActiveSession().encodingLabel = NativePad::EncodingLabel(ActiveSession().documentEncoding);
+        ActiveSession().fileByteCount = file->fileByteCount;
+        ActiveSession().previewDecodedByteCount = file->decodedByteCount;
         SetEditorText(file->text, file->readOnlyPreview);
-        SetSyntaxLanguageForPath(currentPath_);
-        dirty_ = false;
+        SetSyntaxLanguageForPath(ActiveSession().currentPath);
+        ActiveSession().dirty = false;
         CancelRecoveryJournal();
         RecordFileStamp();
-        AddRecentFile(currentPath_);
+        AddRecentFile(ActiveSession().currentPath);
         UpdateTitle();
         UpdateStatus();
+        RefreshTabStrip();
         SetFocus(editor_);
         return true;
     }
 
     void RecordFileStamp() {
-        fileStamp_ = QueryFileStamp(currentPath_);
+        ActiveSession().fileStamp = QueryFileStamp(ActiveSession().currentPath);
     }
 
     void ScheduleRecoverySave() {
@@ -2869,89 +3318,93 @@ private:
         // work, and journaling a multi-gigabyte large-file edit is impractical.
         // The timer is not reset on every keystroke so continuous typing still
         // journals at most once per delay window.
-        if (recoverySavePending_ || readOnlyPreview_ || IsMappedLargeFile() || IsLargeEditable()) {
+        if (ActiveSession().recoverySavePending || ActiveSession().readOnlyPreview || IsMappedLargeFile() || IsLargeEditable()) {
             return;
         }
 
-        recoverySavePending_ = true;
+        ActiveSession().recoverySavePending = true;
         SetTimer(hwnd_, kRecoveryTimerId, kRecoverySaveDelayMs, nullptr);
     }
 
     void PersistRecoverySnapshot() {
         KillTimer(hwnd_, kRecoveryTimerId);
-        recoverySavePending_ = false;
+        ActiveSession().recoverySavePending = false;
 
-        if (!dirty_ || readOnlyPreview_ || IsMappedLargeFile() || IsLargeEditable()) {
+        if (!ActiveSession().dirty || ActiveSession().readOnlyPreview || IsMappedLargeFile() || IsLargeEditable()) {
             return;
         }
 
         NativePad::RecoverySnapshot snapshot;
-        snapshot.originalPath = currentPath_;
-        snapshot.encoding = documentEncoding_;
-        snapshot.lineEnding = documentLineEnding_;
+        snapshot.originalPath = ActiveSession().currentPath;
+        snapshot.encoding = ActiveSession().documentEncoding;
+        snapshot.lineEnding = ActiveSession().documentLineEnding;
         snapshot.text = EditorText();
-        recoveryJournal_.Save(snapshot);
+        ActiveSession().recovery.Save(snapshot);
     }
 
     void CancelRecoveryJournal() {
-        if (recoverySavePending_) {
+        if (ActiveSession().recoverySavePending) {
             KillTimer(hwnd_, kRecoveryTimerId);
-            recoverySavePending_ = false;
+            ActiveSession().recoverySavePending = false;
         }
-        recoveryJournal_.Clear();
+        ActiveSession().recovery.Clear();
     }
 
     void OfferRecoveredDocument() {
-        auto snapshot = NativePad::RecoveryJournal::ClaimAbandoned(NativePad::RecoveryJournal::DefaultRootDirectory());
-        if (!snapshot) {
-            return;
+        const std::wstring root = NativePad::RecoveryJournal::DefaultRootDirectory();
+        while (auto snapshot = NativePad::RecoveryJournal::ClaimAbandoned(root)) {
+            std::wstring message = L"NativePad found unsaved work from a previous session";
+            if (!snapshot->originalPath.empty()) {
+                message += L" for \"" + BaseName(snapshot->originalPath) + L"\"";
+            }
+            message += L".\n\nRestore it?";
+
+            const int choice = ShowAppMessage(
+                message,
+                MessageDialogIcon::Question,
+                L"NativePad",
+                MessageDialogButtons::YesNo,
+                IDYES);
+            if (choice != IDYES) {
+                continue;
+            }
+
+            const bool reuseActive = ActiveSession().currentPath.empty() && !ActiveSession().dirty &&
+                                     ActiveSession().Length() == 0;
+            if (!reuseActive) {
+                AddEmptySession(true);
+            }
+
+            StopFollowTail();
+            ActiveSession().currentPath = snapshot->originalPath;
+            ActiveSession().documentEncoding = snapshot->encoding;
+            ActiveSession().documentLineEnding = snapshot->lineEnding;
+            ActiveSession().encodingLabel = NativePad::EncodingLabel(ActiveSession().documentEncoding);
+            ActiveSession().fileByteCount = 0;
+            ActiveSession().previewDecodedByteCount = 0;
+            SetEditorText(snapshot->text);
+            SetSyntaxLanguageForPath(ActiveSession().currentPath);
+            ActiveSession().dirty = true;
+            RecordFileStamp();
+            UpdateTitle();
+            UpdateStatus();
+            RefreshTabStrip();
+            SetFocus(editor_);
+
+            // The claim deleted the abandoned journal, so immediately write the
+            // restored tab under this process and its new tab id.
+            ActiveSession().recovery.Save(*snapshot);
         }
-
-        std::wstring message = L"NativePad found unsaved work from a previous session";
-        if (!snapshot->originalPath.empty()) {
-            message += L" for \"" + BaseName(snapshot->originalPath) + L"\"";
-        }
-        message += L".\n\nRestore it?";
-
-        const int choice = ShowAppMessage(
-            message,
-            MessageDialogIcon::Question,
-            L"NativePad",
-            MessageDialogButtons::YesNo,
-            IDYES);
-        if (choice != IDYES) {
-            return;
-        }
-
-        StopFollowTail();
-        currentPath_ = snapshot->originalPath;
-        documentEncoding_ = snapshot->encoding;
-        documentLineEnding_ = snapshot->lineEnding;
-        encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
-        fileByteCount_ = 0;
-        previewDecodedByteCount_ = 0;
-        SetEditorText(snapshot->text);
-        SetSyntaxLanguageForPath(currentPath_);
-        dirty_ = true;
-        RecordFileStamp();
-        UpdateTitle();
-        UpdateStatus();
-        SetFocus(editor_);
-
-        // Re-journal immediately: the claimed journal was deleted, and the
-        // restored text must survive another crash before the first edit.
-        NativePad::RecoverySnapshot rejournal = std::move(*snapshot);
-        recoveryJournal_.Save(rejournal);
     }
 
     bool ReloadCurrentDocument(bool preserveCaret) {
-        const std::wstring path = currentPath_;
+        const std::wstring path = ActiveSession().currentPath;
         if (path.empty()) {
             return false;
         }
 
         const size_t caret = editorView_.CaretPosition();
-        if (!OpenDocument(path)) {
+        if (!OpenDocumentIntoActive(path)) {
             return false;
         }
 
@@ -2964,22 +3417,22 @@ private:
     void CheckExternalFileChange() {
         // Follow Tail owns disk polling while it is active; this path only backs
         // the on-activation "file changed on disk" prompt.
-        if (checkingExternalChange_ || followTail_ || currentPath_.empty() || !fileStamp_) {
+        if (ActiveSession().checkingExternalChange || ActiveSession().followTail || ActiveSession().currentPath.empty() || !ActiveSession().fileStamp) {
             return;
         }
 
-        const auto stamp = QueryFileStamp(currentPath_);
-        if (!stamp || SameFileStamp(*stamp, *fileStamp_)) {
+        const auto stamp = QueryFileStamp(ActiveSession().currentPath);
+        if (!stamp || SameFileStamp(*stamp, *ActiveSession().fileStamp)) {
             return;
         }
 
         // Record before prompting so declining does not re-prompt for the same
         // change every time the window is activated.
-        fileStamp_ = stamp;
+        ActiveSession().fileStamp = stamp;
 
-        checkingExternalChange_ = true;
-        std::wstring message = BaseName(currentPath_);
-        message += dirty_
+        ActiveSession().checkingExternalChange = true;
+        std::wstring message = BaseName(ActiveSession().currentPath);
+        message += ActiveSession().dirty
                        ? L" has changed on disk.\n\nReload it and lose your unsaved changes?"
                        : L" has changed on disk.\n\nReload it?";
         const int choice = ShowAppMessage(
@@ -2987,8 +3440,8 @@ private:
             MessageDialogIcon::Question,
             L"NativePad",
             MessageDialogButtons::YesNo,
-            dirty_ ? IDNO : IDYES);
-        checkingExternalChange_ = false;
+            ActiveSession().dirty ? IDNO : IDYES);
+        ActiveSession().checkingExternalChange = false;
 
         if (choice == IDYES) {
             ReloadCurrentDocument(true);
@@ -2996,7 +3449,7 @@ private:
     }
 
     void ToggleFollowTail() {
-        if (followTail_) {
+        if (ActiveSession().followTail) {
             StopFollowTail();
             UpdateTitle();
             UpdateStatus();
@@ -3004,21 +3457,21 @@ private:
             return;
         }
 
-        if (currentPath_.empty()) {
+        if (ActiveSession().currentPath.empty()) {
             return;
         }
 
-        if (dirty_ && !ConfirmSaveIfDirty()) {
+        if (ActiveSession().dirty && !ConfirmSaveIfDirty()) {
             return;
         }
 
-        followTail_ = true;
+        ActiveSession().followTail = true;
 
         // Editable documents follow the file by reloading, so start from the
         // current on-disk state and lock out edits that would be overwritten.
         if (!IsMappedLargeFile()) {
-            const auto stamp = QueryFileStamp(currentPath_);
-            const bool staleBuffer = dirty_ || !stamp || !fileStamp_ || !SameFileStamp(*stamp, *fileStamp_);
+            const auto stamp = QueryFileStamp(ActiveSession().currentPath);
+            const bool staleBuffer = ActiveSession().dirty || !stamp || !ActiveSession().fileStamp || !SameFileStamp(*stamp, *ActiveSession().fileStamp);
             if (staleBuffer && !ReloadCurrentDocument(false)) {
                 StopFollowTail();
                 return;
@@ -3036,35 +3489,35 @@ private:
     }
 
     void StopFollowTail() {
-        if (!followTail_) {
+        if (!ActiveSession().followTail) {
             return;
         }
 
-        followTail_ = false;
+        ActiveSession().followTail = false;
         KillTimer(hwnd_, kTailTimerId);
-        editorView_.SetReadOnly(readOnlyPreview_);
+        editorView_.SetReadOnly(ActiveSession().readOnlyPreview);
     }
 
     void OnTailTimer() {
-        if (!followTail_) {
+        if (!ActiveSession().followTail) {
             return;
         }
 
         if (IsMappedLargeFile()) {
             std::wstring error;
-            switch (mappedDocument_->Refresh(error)) {
+            switch (ActiveSession().mappedDocument->Refresh(error)) {
             case NativePad::MappedTextDocument::RefreshStatus::Unchanged: {
                 // Refresh follows the original handle. If the path now points at
                 // a different file (log rotation by delete + rename), the handle
                 // never changes, so compare the on-disk stamp separately.
-                const auto stamp = QueryFileStamp(currentPath_);
-                if (stamp && fileStamp_ && !SameFileStamp(*stamp, *fileStamp_)) {
+                const auto stamp = QueryFileStamp(ActiveSession().currentPath);
+                if (stamp && ActiveSession().fileStamp && !SameFileStamp(*stamp, *ActiveSession().fileStamp)) {
                     ReloadForTail();
                 }
                 return;
             }
             case NativePad::MappedTextDocument::RefreshStatus::Appended:
-                fileByteCount_ = mappedDocument_->FileByteCount();
+                ActiveSession().fileByteCount = ActiveSession().mappedDocument->FileByteCount();
                 RecordFileStamp();
                 editorView_.RefreshDocumentMetrics();
                 editorView_.MoveCaretToDocumentEnd();
@@ -3085,13 +3538,13 @@ private:
             return;
         }
 
-        const auto stamp = QueryFileStamp(currentPath_);
+        const auto stamp = QueryFileStamp(ActiveSession().currentPath);
         if (!stamp) {
             // The file may be mid-replace (delete + rename). Keep polling.
             return;
         }
 
-        if (fileStamp_ && SameFileStamp(*stamp, *fileStamp_)) {
+        if (ActiveSession().fileStamp && SameFileStamp(*stamp, *ActiveSession().fileStamp)) {
             return;
         }
 
@@ -3108,7 +3561,7 @@ private:
             return;
         }
 
-        if (followTail_) {
+        if (ActiveSession().followTail) {
             if (!IsMappedLargeFile()) {
                 editorView_.SetReadOnly(true);
             }
@@ -3121,7 +3574,7 @@ private:
             return SaveLargeDocument(saveAs);
         }
 
-        if (readOnlyPreview_) {
+        if (ActiveSession().readOnlyPreview) {
             const wchar_t* message = IsMappedLargeFile()
                                          ? L"This file is opened through the read-only large-file viewer. Choose Edit > Enable Large-File Editing to make changes."
                                          : L"This is a read-only large-file preview. NativePad is showing only the initial chunk, so saving is disabled.";
@@ -3129,8 +3582,8 @@ private:
             return false;
         }
 
-        std::wstring path = currentPath_;
-        NativePad::TextEncoding targetEncoding = documentEncoding_;
+        std::wstring path = ActiveSession().currentPath;
+        NativePad::TextEncoding targetEncoding = ActiveSession().documentEncoding;
         if (saveAs || path.empty()) {
             auto selected = ShowSaveDialog(hwnd_, path, targetEncoding);
             if (!selected) {
@@ -3140,25 +3593,32 @@ private:
             targetEncoding = selected->encoding;
         }
 
+        if (SessionWithPath(path, activeTabId_) != nullptr) {
+            ShowAppMessage(
+                L"That file is already open in another tab. Close that tab or choose a different name.",
+                MessageDialogIcon::Information);
+            return false;
+        }
+
         const std::wstring text = EditorText();
         std::wstring error;
-        if (!WriteTextFile(path, text, targetEncoding, documentLineEnding_, error)) {
+        if (!WriteTextFile(path, text, targetEncoding, ActiveSession().documentLineEnding, error)) {
             std::wstring message = L"Could not save file:\n\n" + error;
             ShowAppMessage(message, MessageDialogIcon::Error);
             return false;
         }
 
-        if (followTail_ && path != currentPath_) {
+        if (ActiveSession().followTail && path != ActiveSession().currentPath) {
             StopFollowTail();
         }
-        currentPath_ = path;
-        SetSyntaxLanguageForPath(currentPath_);
-        documentEncoding_ = targetEncoding;
-        encodingLabel_ = NativePad::EncodingLabel(documentEncoding_);
-        dirty_ = false;
+        ActiveSession().currentPath = path;
+        SetSyntaxLanguageForPath(ActiveSession().currentPath);
+        ActiveSession().documentEncoding = targetEncoding;
+        ActiveSession().encodingLabel = NativePad::EncodingLabel(ActiveSession().documentEncoding);
+        ActiveSession().dirty = false;
         CancelRecoveryJournal();
         RecordFileStamp();
-        AddRecentFile(currentPath_);
+        AddRecentFile(ActiveSession().currentPath);
         UpdateTitle();
         UpdateStatus();
         return true;
@@ -3168,26 +3628,26 @@ private:
         // Reopen the currently viewed read-only large file through the editable
         // piece-table backend. The mapped viewer stays the default so the fast
         // read-only and Follow Tail paths are unaffected until the user opts in.
-        if (!IsMappedLargeFile() || currentPath_.empty()) {
+        if (!IsMappedLargeFile() || ActiveSession().currentPath.empty()) {
             return;
         }
 
         auto large = std::make_unique<NativePad::LargeTextDocument>();
         std::wstring error;
-        if (!large->Open(currentPath_, error)) {
+        if (!large->Open(ActiveSession().currentPath, error)) {
             ShowAppMessage(L"Could not enable editing for this file:\n\n" + error, MessageDialogIcon::Error);
             return;
         }
 
         const size_t caret = editorView_.CaretPosition();
         StopFollowTail();
-        encodingLabel_ = large->EncodingLabel();
-        documentEncoding_ = large->Encoding();
-        documentLineEnding_ = large->DetectedLineEnding();
-        fileByteCount_ = large->FileByteCount();
+        ActiveSession().encodingLabel = large->EncodingLabel();
+        ActiveSession().documentEncoding = large->Encoding();
+        ActiveSession().documentLineEnding = large->DetectedLineEnding();
+        ActiveSession().fileByteCount = large->FileByteCount();
         SetLargeEditorDocument(std::move(large));
         editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
-        dirty_ = false;
+        ActiveSession().dirty = false;
         RecordFileStamp();
         UpdateTitle();
         UpdateStatus();
@@ -3195,11 +3655,11 @@ private:
     }
 
     bool SaveLargeDocument(bool saveAs) {
-        std::wstring targetPath = currentPath_;
+        std::wstring targetPath = ActiveSession().currentPath;
         if (saveAs) {
             // Save As writes in the document's own encoding; the encoding picker
             // does not re-encode a large file in this version.
-            auto selected = ShowSaveDialog(hwnd_, targetPath, documentEncoding_);
+            auto selected = ShowSaveDialog(hwnd_, targetPath, ActiveSession().documentEncoding);
             if (!selected) {
                 return false;
             }
@@ -3208,65 +3668,80 @@ private:
         if (targetPath.empty()) {
             return false;
         }
+        if (SessionWithPath(targetPath, activeTabId_) != nullptr) {
+            ShowAppMessage(
+                L"That file is already open in another tab. Close that tab or choose a different name.",
+                MessageDialogIcon::Information);
+            return false;
+        }
 
         // Stage the new content beside the target so the replace is atomic, then
         // unmap the original before swapping it in and reopening from disk.
         std::wstring error;
         const std::wstring stagingPath = targetPath + L".np-save";
-        if (!largeDocument_->SaveTo(stagingPath, error)) {
+        if (!ActiveSession().largeDocument->SaveTo(stagingPath, error)) {
             ShowAppMessage(L"Could not save file:\n\n" + error, MessageDialogIcon::Error);
             DeleteFileW(stagingPath.c_str());
             return false;
         }
 
         const size_t caret = editorView_.CaretPosition();
-        largeDocument_->Close();
+        const std::wstring oldSessionBacking = ActiveSession().sessionBackingPath;
+        const std::wstring reopenPath =
+            oldSessionBacking.empty() ? ActiveSession().currentPath : oldSessionBacking;
+        ActiveSession().largeDocument->Close();
 
         if (!MoveFileExW(stagingPath.c_str(), targetPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
             error = GetLastErrorText();
             DeleteFileW(stagingPath.c_str());
-            // Reopen the original so the document is not left detached.
-            if (largeDocument_->Open(currentPath_, error)) {
-                editorView_.SetLargeDocument(largeDocument_.get());
+            // Reopen the previous backing file so restored unsaved edits are not
+            // lost when an atomic replace fails.
+            if (ActiveSession().largeDocument->Open(reopenPath, error)) {
+                editorView_.SetLargeDocument(ActiveSession().largeDocument.get());
                 editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
             }
             ShowAppMessage(L"Could not replace the file while saving.", MessageDialogIcon::Error);
             return false;
         }
 
-        if (!largeDocument_->Open(targetPath, error)) {
+        if (!ActiveSession().largeDocument->Open(targetPath, error)) {
+            if (!reopenPath.empty()) {
+                ActiveSession().largeDocument->Open(reopenPath, error);
+                editorView_.SetLargeDocument(ActiveSession().largeDocument.get());
+                editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
+            }
             ShowAppMessage(L"The file was saved, but could not be reopened:\n\n" + error, MessageDialogIcon::Error);
             return false;
         }
 
-        currentPath_ = targetPath;
-        encodingLabel_ = largeDocument_->EncodingLabel();
-        documentEncoding_ = largeDocument_->Encoding();
-        documentLineEnding_ = largeDocument_->DetectedLineEnding();
-        fileByteCount_ = largeDocument_->FileByteCount();
+        ActiveSession().sessionBackingPath.clear();
+        if (!oldSessionBacking.empty() && !SamePath(oldSessionBacking, targetPath)) {
+            DeleteFileW(oldSessionBacking.c_str());
+        }
+
+        ActiveSession().currentPath = targetPath;
+        ActiveSession().encodingLabel = ActiveSession().largeDocument->EncodingLabel();
+        ActiveSession().documentEncoding = ActiveSession().largeDocument->Encoding();
+        ActiveSession().documentLineEnding = ActiveSession().largeDocument->DetectedLineEnding();
+        ActiveSession().fileByteCount = ActiveSession().largeDocument->FileByteCount();
         editorView_.SetSyntaxLanguage(SyntaxLanguage::PlainText);
         // The backend object is unchanged, but the view must rebuild against the
         // freshly reopened content.
-        editorView_.SetLargeDocument(largeDocument_.get());
+        editorView_.SetLargeDocument(ActiveSession().largeDocument.get());
         editorView_.SelectRange(std::min<std::size_t>(caret, DocumentLength()), 0);
-        dirty_ = false;
+        ActiveSession().dirty = false;
         RecordFileStamp();
-        AddRecentFile(currentPath_);
+        AddRecentFile(ActiveSession().currentPath);
         UpdateTitle();
         UpdateStatus();
         return true;
     }
 
     void OnDropFiles(HDROP drop) {
-        if (!ConfirmSaveIfDirty()) {
-            DragFinish(drop);
-            return;
-        }
-
         const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-        if (count > 0) {
+        for (UINT i = 0; i < count; ++i) {
             std::array<wchar_t, 32768> path{};
-            if (DragQueryFileW(drop, 0, path.data(), static_cast<UINT>(path.size())) > 0) {
+            if (DragQueryFileW(drop, i, path.data(), static_cast<UINT>(path.size())) > 0) {
                 OpenDocument(path.data());
             }
         }
@@ -3294,14 +3769,12 @@ private:
         {L"Help", nullptr, {}},
     }};
     NativePad::EditorFontSpec preferredFont_{};
-    NativePad::DocumentBuffer document_;
-    std::unique_ptr<NativePad::MappedTextDocument> mappedDocument_;
-    std::unique_ptr<NativePad::LargeTextDocument> largeDocument_;
     NativePad::EditorView editorView_;
-    std::wstring currentPath_;
-    std::wstring encodingLabel_{L"UTF-8"};
-    NativePad::TextEncoding documentEncoding_{NativePad::TextEncoding::Utf8};
-    NativePad::LineEnding documentLineEnding_{NativePad::LineEnding::CrLf};
+    NativePad::TabStrip tabStrip_;
+    NativePad::SessionStore sessionStore_;
+    std::vector<std::unique_ptr<NativePad::DocumentSession>> tabs_;
+    NativePad::TabId activeTabId_{0};
+    NativePad::TabId nextTabId_{1};
     std::wstring statusText_;
     std::array<wchar_t, 512> findBuffer_{};
     std::array<wchar_t, 512> replaceBuffer_{};
@@ -3310,26 +3783,18 @@ private:
     HWND findDialog_{};
     RECT pageMarginsThousandths_{1000, 1000, 1000, 1000};
     RECT savedWindowRect_{};
-    NativePad::RecoveryJournal recoveryJournal_;
     std::vector<std::wstring> recentFiles_;
-    std::optional<FileStamp> fileStamp_;
-    uint64_t fileByteCount_{0};
-    size_t previewDecodedByteCount_{0};
     UINT dpi_{USER_DEFAULT_SCREEN_DPI};
     int hotMenu_{-1};
     int activeMenu_{-1};
     int keyboardMenuIndex_{-1};
-    bool dirty_{false};
-    bool readOnlyPreview_{false};
-    bool followTail_{false};
-    bool checkingExternalChange_{false};
-    bool recoverySavePending_{false};
     bool replaceDialogOpen_{false};
     bool lastFindMatchCase_{false};
     bool lastFindDown_{true};
     bool preferredWordWrap_{false};
     bool preferredLineNumbers_{false};
     bool statusBarVisible_{true};
+    bool tabBarVisible_{true};
     bool darkMode_{false};
     bool effectiveDarkMode_{false};
     bool darkModeForced_{false};
@@ -3367,8 +3832,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     int argumentCount = 0;
     LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
     if (arguments != nullptr) {
-        if (argumentCount > 1) {
-            app.OpenInitialFile(arguments[1]);
+        for (int i = 1; i < argumentCount; ++i) {
+            app.OpenInitialFile(arguments[i]);
         }
         LocalFree(arguments);
     }
@@ -3378,6 +3843,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         {FVIRTKEY | FCONTROL, 'O', ID_FILE_OPEN},
         {FVIRTKEY | FCONTROL, 'S', ID_FILE_SAVE},
         {FVIRTKEY | FCONTROL | FSHIFT, 'S', ID_FILE_SAVE_AS},
+        {FVIRTKEY | FCONTROL, 'W', ID_FILE_CLOSE_TAB},
         {FVIRTKEY | FCONTROL, 'P', ID_FILE_PRINT},
         {FVIRTKEY | FCONTROL, 'Z', ID_EDIT_UNDO},
         {FVIRTKEY | FCONTROL, 'Y', ID_EDIT_REDO},
@@ -3403,6 +3869,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         {FVIRTKEY | FCONTROL, VK_SUBTRACT, ID_VIEW_ZOOM_OUT},
         {FVIRTKEY | FCONTROL, '0', ID_VIEW_ZOOM_RESET},
         {FVIRTKEY | FCONTROL, VK_NUMPAD0, ID_VIEW_ZOOM_RESET},
+        {FVIRTKEY | FCONTROL, VK_TAB, ID_VIEW_NEXT_TAB},
+        {FVIRTKEY | FCONTROL | FSHIFT, VK_TAB, ID_VIEW_PREVIOUS_TAB},
+        {FVIRTKEY | FCONTROL, VK_NEXT, ID_VIEW_NEXT_TAB},
+        {FVIRTKEY | FCONTROL, VK_PRIOR, ID_VIEW_PREVIOUS_TAB},
     };
 
     HACCEL acceleratorTable = CreateAcceleratorTableW(accelerators, static_cast<int>(std::size(accelerators)));

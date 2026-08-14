@@ -46,6 +46,43 @@ struct EditorFontSpec {
     bool italic{false};
 };
 
+// Document-specific interaction state. NativePad keeps one EditorView HWND and
+// moves this compact state object between tabs, so inactive tabs retain undo,
+// selection, and scroll position without owning DirectWrite/Direct2D resources.
+class EditorViewState {
+public:
+    EditorViewState() = default;
+    EditorViewState(EditorViewState&&) noexcept = default;
+    EditorViewState& operator=(EditorViewState&&) noexcept = default;
+
+    EditorViewState(const EditorViewState&) = delete;
+    EditorViewState& operator=(const EditorViewState&) = delete;
+
+private:
+    struct EditAction {
+        std::size_t position{};
+        std::wstring erased;
+        std::wstring inserted;
+        std::size_t erasedUnits{};
+        std::size_t insertedUnits{};
+        std::size_t caretBefore{};
+        std::size_t caretAfter{};
+    };
+
+    friend class EditorView;
+
+    LineIndex lineIndex_;
+    std::vector<EditAction> undoStack_;
+    std::vector<EditAction> redoStack_;
+    std::size_t caret_{0};
+    std::size_t anchor_{0};
+    std::size_t firstLine_{0};
+    std::size_t firstVisualRow_{0};
+    std::size_t horizontalColumn_{0};
+    std::size_t desiredColumn_{0};
+    bool initialized_{false};
+};
+
 class EditorView {
 public:
     EditorView();
@@ -59,6 +96,10 @@ public:
     void SetDocument(DocumentBuffer* document);
     void SetMappedDocument(MappedTextDocument* document);
     void SetLargeDocument(LargeTextDocument* document);
+    void SetDocument(DocumentBuffer* document, EditorViewState state);
+    void SetMappedDocument(MappedTextDocument* document, EditorViewState state);
+    void SetLargeDocument(LargeTextDocument* document, EditorViewState state);
+    [[nodiscard]] EditorViewState TakeState() noexcept;
     void ResetView();
     void RefreshDocumentMetrics();
     void MoveCaretToDocumentEnd();
@@ -109,18 +150,7 @@ private:
     // Paint and input paths use the same coordinate system: a document position
     // is either a wchar offset in the editable buffer/UTF-16 mapped file, or a
     // byte offset in a byte-backed mapped file.
-    struct EditAction {
-        std::size_t position;
-        std::wstring erased;
-        std::wstring inserted;
-        // Document-unit lengths of the erased and inserted spans. These match the
-        // string sizes for the editable UTF-16 buffer, but differ for byte-backed
-        // large documents where positions are byte offsets.
-        std::size_t erasedUnits;
-        std::size_t insertedUnits;
-        std::size_t caretBefore;
-        std::size_t caretAfter;
-    };
+    using EditAction = EditorViewState::EditAction;
 
     // Result of a low-level backend replace, in document units.
     struct BackendEdit {
@@ -164,6 +194,7 @@ private:
     [[nodiscard]] bool IsEditable() const noexcept;
     BackendEdit BackendReplace(std::size_t position, std::size_t eraseLength, const std::wstring& insertText);
     void PushUndo(EditAction action);
+    void RestoreState(EditorViewState state);
     void NotifyChanged();
     void NotifyCursorChanged() const;
     void OnCharacter(wchar_t value);
@@ -172,6 +203,8 @@ private:
     void OnMouseDoubleClick(int x, int y);
     void OnMouseMove(int x, int y);
     void OnMouseWheel(short delta);
+    void OnDragScrollTimer();
+    void UpdateDragSelection(int x, int y);
     void CaptureMouseDrag();
     void ReleaseMouseDrag();
     // The following helpers isolate the two backends so rendering and navigation
@@ -200,7 +233,10 @@ private:
     std::size_t TotalVisualRows() const;
     std::size_t VisualRowIndexForPosition(std::size_t position) const;
     VisualRow VisualRowFromIndex(std::size_t visualRow) const;
+    std::size_t VisibleRowCount() const;
+    std::size_t MaxFirstLogicalLine(std::size_t visibleRows) const;
     std::size_t MaxFirstVisualRow(std::size_t visibleRows) const;
+    std::size_t MaxHorizontalScrollColumn() const;
     std::size_t CaretDisplayColumn() const;
     std::size_t LineNumberDigitCount() const noexcept;
     float LineNumberGutterWidthDips() const;
@@ -230,18 +266,11 @@ private:
     struct Impl;
     Impl* impl_{};
 
-    LineIndex lineIndex_;
-    std::vector<EditAction> undoStack_;
-    std::vector<EditAction> redoStack_;
+    EditorViewState state_;
     // When word wrap is on, this prefix table maps visual rows back to logical
     // lines. It is rebuilt lazily because changing font/window width invalidates it.
     mutable std::vector<std::size_t> visualRowStarts_;
-    std::size_t caret_{0};
-    std::size_t anchor_{0};
-    std::size_t firstLine_{0};
-    std::size_t firstVisualRow_{0};
-    std::size_t horizontalColumn_{0};
-    std::size_t desiredColumn_{0};
+    POINT dragPoint_{};
     POINT lastDoubleClickPoint_{};
     DWORD lastDoubleClickTick_{0};
     UINT dpi_{USER_DEFAULT_SCREEN_DPI};

@@ -1,9 +1,10 @@
 # Classic Notepad Parity
 
-NativePad targets the last classic, menu-driven Windows Notepad — not the newer
-tabbed Store app. The goal is that someone who knows classic Notepad can use
-NativePad without relearning anything, while getting large-file handling and
-dark mode that classic Notepad never had.
+NativePad targets the command set and editing behavior of the last classic,
+menu-driven Windows Notepad while adopting lightweight tabs from the newer app.
+The goal is that someone who knows classic Notepad can use NativePad without
+relearning its editor, while getting multi-document and large-file handling
+that classic Notepad never had.
 
 This page records where NativePad matches, where it deliberately differs, and
 what remains open.
@@ -15,12 +16,12 @@ accelerator.
 
 | Classic Notepad | NativePad |
 | --- | --- |
-| File: New, Open, Save, Save As, Page Setup, Print, Exit | Match |
+| File: New, Open, Save, Save As, Page Setup, Print, Exit | Core commands match; New creates a tab, and Close Tab is added |
 | Edit: Undo, Cut, Copy, Paste, Delete, Find, Find Next, Replace, Go To, Select All, Time/Date | Match |
 | Format: Word Wrap, Font | Match, with a custom theme-aware Font dialog instead of `ChooseFont` |
 | View: Status Bar | Match |
 | Help: About | Match. **View Help** is not implemented — there is no bundled help file |
-| Accelerators: `Ctrl+N/O/S/P/Z/X/C/V/F/H/G/A`, `F3`, `Shift+F3`, `F5`, `Del`, `Alt+F4` | Match |
+| Accelerators: `Ctrl+N/O/S/P/Z/X/C/V/F/H/G/A`, `F3`, `Shift+F3`, `F5`, `Del`, `Alt+F4` | Match; `Ctrl+W` and tab-cycling shortcuts are added |
 
 Menu commands and accelerators route through the same handlers, and enabled or
 disabled state updates with selection and read-only document state.
@@ -34,6 +35,9 @@ disabled state updates with selection and read-only document state.
 | Find Previous | Direction radio only | Also `Shift+F3` | Faster, and matches modern Notepad |
 | Font dialog | `ChooseFont` common dialog | Custom dialog | The common dialog cannot be themed for dark mode |
 | Message prompts | System message boxes | Custom `MessageDialog` | System boxes ignore the app's dark theme |
+| Document lifetime | One document per window | Multiple tabs in one window | Keeps related files together while retaining one lightweight editor/rendering surface |
+| Tab chrome | None | Optional | Clearing **View > Tab Bar** restores the classic menu-to-editor layout without discarding open documents |
+| Exit with unsaved work | Prompts to save | Stores and restores the tab session without prompting | Matches the session workflow expected from a tabbed editor; explicit Close Tab still prompts |
 | Very large files | Loads, or fails, slowly | Read-only memory-mapped view | Never silently truncates, never blocks on a full decode |
 | Settings storage | Registry | `%LOCALAPPDATA%\NativePad\NativePad.ini` | Portable; a ZIP install leaves no registry footprint |
 
@@ -46,6 +50,12 @@ Beyond classic Notepad, aligned with modern Notepad where an equivalent exists:
 - Line numbers as an optional editor gutter.
 - Zoom (`Ctrl`+wheel, `Ctrl+Plus/Minus`, `Ctrl+0`), 10%–500%.
 - Recent files in the File menu.
+- Tabs with per-document undo, selection, scroll, Follow Tail, and recovery;
+  `Ctrl+W` closes and `Ctrl+Tab` cycles.
+- A persisted **View > Tab Bar** toggle for users who prefer the classic
+  single-surface appearance.
+- Automatic normal-exit session restore, including unsaved text and edited
+  large files.
 - Duplicate Line, Delete Line, and Move Line Up/Down.
 - Follow Tail (`F6`) for logs that are still being written, and a reload prompt
   when the open file changes on disk.
@@ -62,8 +72,9 @@ Beyond classic Notepad, aligned with modern Notepad where an equivalent exists:
   ANSI save that would lose characters rather than writing a truncated file.
 - Line endings are normalized back to the style the file was opened with.
   Files that were already mixed stay mixed.
-- Dirty-state prompts match classic Notepad for New, Open, Exit, drag-and-drop
-  open, and command-line open.
+- Close Tab prompts for that dirty tab. Exit stores the workspace without
+  prompting, and the next launch restores it. New, Open, drag-and-drop, and
+  command-line paths create tabs without disturbing existing unsaved work.
 - Status bar line and column stay correct across CRLF, LF, long lines,
   selection, and horizontal scrolling.
 
@@ -82,7 +93,8 @@ Beyond classic Notepad, aligned with modern Notepad where an equivalent exists:
 
 Walk this list when validating a release:
 
-- **File:** New, Open, Save, Save As, Recent Files, Page Setup, Print, Exit.
+- **File:** New Tab, Open, Save, Save As, Close Tab, Recent Files, Page Setup,
+  Print, Exit.
 - **Edit:** Undo, Cut, Copy, Paste, Delete, Find, Find Next, Find Previous,
   Replace, Go To, Select All, Time/Date, Duplicate/Delete Line, Move Line
   Up/Down.
@@ -90,8 +102,10 @@ Walk this list when validating a release:
 - **View:** Zoom In/Out/Restore, Line Numbers, Status Bar, Dark Mode, Follow
   Tail.
 - **Help:** Set as Default Text Editor, About.
-- **Behavior:** dirty prompts, command-line open, drag-and-drop open, dark and
-  light mode, read-only mapped viewing, encoding load/save and Save As encoding
-  changes, mouse selection, line/column status, keyboard shortcuts.
+- **Behavior:** explicit-close dirty prompts, normal-exit session restore,
+  per-tab state retention, multi-file command-line/drop open, tab overflow and
+  keyboard cycling, dark and light mode, read-only mapped viewing, encoding
+  load/save and Save As encoding changes, mouse selection, line/column status,
+  keyboard shortcuts.
 
 The full pre-release pass is [Release Checklist](RELEASE_CHECKLIST.md).

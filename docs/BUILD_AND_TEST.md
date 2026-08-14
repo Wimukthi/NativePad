@@ -89,6 +89,7 @@ LineIndex tests passed
 MappedTextDocument tests passed
 LargeTextDocument tests passed
 RecoveryJournal tests passed
+SessionStore tests passed
 TextFormat tests passed
 SyntaxHighlighter tests passed
 TextFileTypes tests passed
@@ -106,6 +107,7 @@ exit code.
 | `MappedTextDocument` | UTF-8/byte-backed and UTF-16 line starts, range decoding, find, and refresh — appended content extends the index across the old mapping boundary, in-place rewrites report as replaced |
 | `LargeTextDocument` | Piece-table-over-mmap insert/erase/find across UTF-8 and UTF-16 originals, erase snapping to UTF-8 code-point boundaries, line/offset queries, and save round-trips that preserve a BOM |
 | `RecoveryJournal` | Journals from dead processes are claimed with exact text and metadata, journals from live processes are left alone, and clearing removes every journal file |
+| `SessionStore` | Versioned normal-exit manifests, exact unsaved-text round trips, clean file-backed metadata, large-file snapshots, and consume/clear behavior |
 | `TextFormat` | Encoding labels, UTF-8 validation, OEM 437 heuristics, line-ending detection and normalization, and save-encoding byte output |
 | `SyntaxHighlighter` | Line-local JSON, INI, Markdown, and XML token spans |
 | `TextFileTypes` | Extension lookup, dialog patterns, and default-extension selection |

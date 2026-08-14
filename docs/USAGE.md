@@ -1,11 +1,12 @@
 # Usage
 
-NativePad opens a file passed on the command line, dropped onto its window, or
-chosen from **File > Open**. With no argument it starts on an empty `Untitled`
-document.
+NativePad opens files passed on the command line, dropped onto its window, or
+chosen from **File > Open**. Every supplied file gets a tab. With no argument it
+restores the previous tab session, or starts with `Untitled` when no session
+exists.
 
 ```powershell
-NativePad.exe "C:\logs\server.log"
+NativePad.exe "C:\logs\server.log" "C:\logs\errors.log"
 ```
 
 ## Menus
@@ -14,15 +15,16 @@ NativePad.exe "C:\logs\server.log"
 
 | Command | Shortcut | Notes |
 | --- | --- | --- |
-| New | `Ctrl+N` | Prompts to save a modified document first |
-| Open | `Ctrl+O` | Also accepts drag-and-drop onto the window |
+| New Tab | `Ctrl+N` | Opens an empty tab without disturbing existing work |
+| Open | `Ctrl+O` | Opens a tab; reuses a clean empty tab and activates a file that is already open |
 | Save | `Ctrl+S` | Keeps the encoding and line endings detected on open |
 | Save As | `Ctrl+Shift+S` | Encoding picker: UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, ANSI, OEM 437 (NFO) |
+| Close Tab | `Ctrl+W` | Prompts only when that tab has unsaved changes |
 | Recent files | — | Up to eight entries, most recent first; missing files are dropped when opened |
 | Clear Recent Files | — | Empties the list |
 | Page Setup | — | Native dialog; margins persist between sessions |
 | Print | `Ctrl+P` | Native dialog; pagination and spooling run off the UI thread |
-| Exit | `Alt+F4` | Prompts to save a modified document |
+| Exit | `Alt+F4` | Remembers the complete tab session and closes without save prompts |
 
 ### Edit
 
@@ -55,6 +57,7 @@ NativePad.exe "C:\logs\server.log"
 | --- | --- | --- |
 | Zoom In / Out | `Ctrl+Plus` / `Ctrl+Minus` | Also `Ctrl`+mouse wheel; 10% steps between 10% and 500% |
 | Restore Default Zoom | `Ctrl+0` | Zoom scales rendering only — the saved font size does not change |
+| Tab Bar | — | Hides the tab strip for a classic Notepad layout; the setting persists |
 | Line Numbers | — | Visual gutter only; never saved, copied, searched, or printed |
 | Status Bar | — | Toggles the bar described below |
 | Dark Mode | — | Overrides the system app theme; the override persists |
@@ -71,6 +74,40 @@ Right-clicking the editor opens a context menu with Undo, Redo, Cut, Copy,
 Paste, Delete, Find, Replace, and Select All. `Alt` or `F10` reveals the
 menu-bar mnemonics and moves focus into menu navigation; `Esc` returns focus to
 the editor.
+
+## Tabs
+
+The tab strip uses one shared editor surface, so opening more tabs does not
+create more editor windows or DirectWrite/Direct2D render targets. Each tab
+still retains its own document backend, undo/redo history, caret, selection,
+scroll position, encoding, dirty state, Follow Tail mode, and recovery journal.
+
+The selected tab uses a contrasting rounded surface and accent line. The
+compact 30-DIP strip leaves more room for text, and the `+` button sits directly
+after the visible tabs. A close button remains visible on the selected tab and
+appears on inactive tabs when hovered; the surfaces and controls use
+antialiased, DPI-scaled rendering.
+
+| Action | Shortcut |
+| --- | --- |
+| New tab | `Ctrl+N` or the `+` button |
+| Close tab | `Ctrl+W`, its close button, or middle-click |
+| Next tab | `Ctrl+Tab` or `Ctrl+PageDown` |
+| Previous tab | `Ctrl+Shift+Tab` or `Ctrl+PageUp` |
+
+When the strip cannot show every tab at its minimum width, arrow buttons scroll
+the visible tab range. Hover a tab to see its full path, or hover the `+` button
+to see its `Ctrl+N` shortcut. Closing the final tab creates a fresh `Untitled`
+tab; repeating that action does not advance the title to `Untitled 2`,
+`Untitled 3`, and so on.
+
+Clear **View > Tab Bar** to place the editor directly below the menu bar for a
+classic Notepad appearance. Hiding the bar does not discard documents: tab
+switching shortcuts, session restore, and other tab commands continue to work.
+
+Closing a tab is an explicit discard action, so a dirty tab asks whether to
+save first. Closing the window is different: NativePad stores the workspace and
+restores it on the next launch without asking about each tab.
 
 ## File Types and Highlighting
 
@@ -133,22 +170,39 @@ the status bar shows `FOLLOW TAIL`.
 - Mapped large files refresh incrementally — a multi-gigabyte log is never
   rescanned from the start.
 - Log rotation by delete-and-rename is detected and reloads the new file.
-- Opening a different file or **File > New** turns Follow Tail off.
+- Switching tabs suspends polling without turning Follow Tail off. Returning to
+  the tab catches up immediately and resumes its one-second polling timer.
 
 Independently of Follow Tail, NativePad re-checks the file whenever its window
 is activated and offers to reload if it changed on disk, warning first when
 unsaved edits would be lost.
 
+## Session Restore
+
+On a normal exit, NativePad stores the tab order, active tab, paths, formats,
+Follow Tail state, and unsaved content under
+`%LOCALAPPDATA%\NativePad\Session`. Dirty and untitled tabs are snapshotted;
+clean file-backed tabs reopen from disk. Edited large-file tabs use an on-disk
+snapshot so they do not have to be decoded into memory.
+
+The next launch restores that workspace automatically. **Close Tab** remains
+intentional: it prompts for a dirty tab, and a tab that you close is not part of
+the next saved session. If the session cannot be written, NativePad reports the
+error and remains open rather than discarding the workspace.
+
 ## Crash Recovery
 
-While a document has unsaved changes, NativePad journals a snapshot to
+While a tab has unsaved changes, NativePad journals a snapshot to
 `%LOCALAPPDATA%\NativePad\Recovery` at most once every three seconds. The
-journal is deleted on save, on opening another file, on **File > New**, and on
-a normal exit — so a journal that survives means the process died.
+journal is deleted when that tab is saved or intentionally closed, and all
+journals are deleted on a normal exit. Switching tabs does not touch another
+tab's recovery data, so a journal that survives means the process died.
 
-The next launch offers to restore it. Declining discards it. Two NativePad
-instances running at once never claim each other's journals. Read-only and
-large-file documents are not journaled, because they hold no unsaved edits.
+The next launch offers to restore every abandoned journal, one tab per accepted
+snapshot. Declining discards it. Two NativePad instances running at once never
+claim each other's journals. Normal-exit session restore and crash recovery are
+separate: mapped, read-only, and editable-large documents are not crash
+journaled.
 
 ## Settings
 
@@ -158,7 +212,7 @@ Preferences live in `%LOCALAPPDATA%\NativePad\NativePad.ini` under a single
 | Key | Meaning |
 | --- | --- |
 | `DarkModeForced`, `DarkMode` | Whether a manual theme override is set, and which theme it selects |
-| `WordWrap`, `LineNumbers`, `StatusBarVisible` | View toggles |
+| `WordWrap`, `LineNumbers`, `StatusBarVisible`, `TabBarVisible` | View toggles |
 | `FontFamily`, `FontSizeTenths`, `FontWeight`, `FontItalic` | Editor font (default: Consolas, 15 DIP) |
 | `WindowLeft/Top/Right/Bottom`, `WindowMaximized` | Window placement |
 | `MarginLeft/Top/Right/Bottom` | Page Setup margins, in thousandths of an inch |
@@ -180,5 +234,5 @@ A check reads the latest GitHub release, compares its tag against the running
 executable's file version, and — if newer — downloads the
 `NativePadSetup-*-win-x64.exe` asset to `%LOCALAPPDATA%\NativePad\Updates`. The
 download is verified against the release asset's SHA-256 digest when GitHub
-publishes one. NativePad prompts about unsaved work before launching the
+publishes one. NativePad stores the current tab session before launching the
 installer elevated.
