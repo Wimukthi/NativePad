@@ -11,6 +11,13 @@ incremented automatically and does not by itself imply a release.
 
 Nothing yet.
 
+## [1.2.1.1] - 2026-08-16
+
+### Fixed
+
+- Find and Replace dialogs no longer retain a light Direction-group background
+  after switching to dark mode.
+
 ## [1.2.0.1] - 2026-08-14
 
 ### Added
@@ -164,7 +171,8 @@ First published release.
 - Expanded tests and documentation around the mapped read-only large-file
   backend.
 
-[Unreleased]: https://github.com/Wimukthi/NativePad/compare/v1.2.0.1...HEAD
+[Unreleased]: https://github.com/Wimukthi/NativePad/compare/v1.2.1.1...HEAD
+[1.2.1.1]: https://github.com/Wimukthi/NativePad/releases/tag/v1.2.1.1
 [1.2.0.1]: https://github.com/Wimukthi/NativePad/releases/tag/v1.2.0.1
 [1.1.0.4]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.4
 [1.1.0.3]: https://github.com/Wimukthi/NativePad/releases/tag/v1.1.0.3

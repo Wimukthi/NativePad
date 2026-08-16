@@ -28,7 +28,6 @@ struct FindReplaceDialogState {
     HWND replaceLabel{};
     HWND replaceEdit{};
     HWND matchCase{};
-    HWND directionGroup{};
     HWND upRadio{};
     HWND downRadio{};
     HWND findNext{};
@@ -37,6 +36,7 @@ struct FindReplaceDialogState {
     HWND cancel{};
     HFONT font{};
     HBRUSH backgroundBrush{};
+    RECT directionBounds{};
     UINT dpi{USER_DEFAULT_SCREEN_DPI};
     bool dark{false};
     bool replaceMode{false};
@@ -138,7 +138,12 @@ void LayoutFindReplaceDialog(FindReplaceDialogState* state) {
     const int directionLeft = std::max(minDirectionLeft, rightPaneLeft - gap - preferredGroupWidth);
     const int groupWidth = std::max(ScaleForDpi(180, state->dpi), rightPaneLeft - gap - directionLeft);
     const int groupHeight = ScaleForDpi(64, state->dpi);
-    MoveWindow(state->directionGroup, directionLeft, groupTop, groupWidth, groupHeight, TRUE);
+    state->directionBounds = {
+        directionLeft,
+        groupTop,
+        directionLeft + groupWidth,
+        groupTop + groupHeight,
+    };
     const int matchWidth = std::max(ScaleForDpi(96, state->dpi), directionLeft - margin - gap);
     const int optionTop = groupTop + ScaleForDpi(30, state->dpi);
     const int radioLeft = directionLeft + ScaleForDpi(16, state->dpi);
@@ -156,6 +161,51 @@ void LayoutFindReplaceDialog(FindReplaceDialogState* state) {
                                              : top + buttonHeight + ScaleForDpi(16, state->dpi);
     MoveWindow(state->cancel, rightPaneLeft, cancelTop, buttonWidth, buttonHeight, TRUE);
     InvalidateRect(state->hwnd, nullptr, TRUE);
+}
+
+void PaintDirectionGroup(FindReplaceDialogState* state, HDC hdc) {
+    if (state == nullptr || hdc == nullptr || IsRectEmpty(&state->directionBounds)) {
+        return;
+    }
+
+    const DialogColors colors = DialogColorsForTheme(state->dark);
+    const wchar_t caption[] = L"Direction";
+    const int captionLeft = state->directionBounds.left + ScaleForDpi(8, state->dpi);
+    const int captionPadding = ScaleForDpi(4, state->dpi);
+
+    HGDIOBJ previousFont = state->font != nullptr ? SelectObject(hdc, state->font) : nullptr;
+    SIZE captionSize{};
+    GetTextExtentPoint32W(hdc, caption, ARRAYSIZE(caption) - 1, &captionSize);
+
+    RECT frame = state->directionBounds;
+    frame.top += std::max<LONG>(1, captionSize.cy / 2);
+    HBRUSH borderBrush = CreateSolidBrush(colors.border);
+    if (borderBrush != nullptr) {
+        FrameRect(hdc, &frame, borderBrush);
+        DeleteObject(borderBrush);
+    }
+
+    RECT captionBackground{
+        captionLeft - captionPadding,
+        state->directionBounds.top,
+        captionLeft + captionSize.cx + captionPadding,
+        state->directionBounds.top + captionSize.cy,
+    };
+    FillRect(hdc, &captionBackground, state->backgroundBrush);
+
+    RECT captionRect{
+        captionLeft,
+        state->directionBounds.top,
+        captionLeft + captionSize.cx,
+        state->directionBounds.top + captionSize.cy,
+    };
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, colors.text);
+    DrawTextW(hdc, caption, -1, &captionRect, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+    if (previousFont != nullptr) {
+        SelectObject(hdc, previousFont);
+    }
 }
 
 void ApplyFindReplaceDialogTheme(FindReplaceDialogState* state) {
@@ -183,6 +233,7 @@ void PaintFindReplaceDialog(FindReplaceDialogState* state) {
     }
 
     FillRect(hdc, &ps.rcPaint, state->backgroundBrush);
+    PaintDirectionGroup(state, hdc);
     EndPaint(state->hwnd, &ps);
 }
 
@@ -207,7 +258,6 @@ LRESULT CALLBACK FindReplaceDialogProc(HWND hwnd, UINT message, WPARAM wParam, L
             state->replaceEdit = CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kReplaceTextEditId)), nullptr, nullptr);
         }
         state->matchCase = CreateWindowExW(0, L"BUTTON", L"Match case", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFindMatchCaseId)), nullptr, nullptr);
-        state->directionGroup = CreateWindowExW(0, L"BUTTON", L"Direction", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
         state->upRadio = CreateWindowExW(0, L"BUTTON", L"Up", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFindDirectionUpId)), nullptr, nullptr);
         state->downRadio = CreateWindowExW(0, L"BUTTON", L"Down", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFindDirectionDownId)), nullptr, nullptr);
         state->findNext = CreateWindowExW(0, L"BUTTON", L"Find Next", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDOK), nullptr, nullptr);
@@ -217,13 +267,12 @@ LRESULT CALLBACK FindReplaceDialogProc(HWND hwnd, UINT message, WPARAM wParam, L
         }
         state->cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDCANCEL), nullptr, nullptr);
 
-        const std::array<HWND, 12> controls{
+        const std::array<HWND, 11> controls{
             state->findLabel,
             state->findEdit,
             state->replaceLabel,
             state->replaceEdit,
             state->matchCase,
-            state->directionGroup,
             state->upRadio,
             state->downRadio,
             state->findNext,
