@@ -19,6 +19,7 @@ accelerator.
 | File: New, Open, Save, Save As, Page Setup, Print, Exit | Core commands match; New creates a tab, and Close Tab is added |
 | Edit: Undo, Cut, Copy, Paste, Delete, Find, Find Next, Replace, Go To, Select All, Time/Date | Match |
 | Format: Word Wrap, Font | Match, with a custom theme-aware Font dialog instead of `ChooseFont` |
+| Context menu: Right to left Reading order, `Ctrl+Right Shift` / `Ctrl+Left Shift` | Match; also under **Format** |
 | View: Status Bar | Match |
 | Help: About | Match. **View Help** is not implemented — there is no bundled help file |
 | Accelerators: `Ctrl+N/O/S/P/Z/X/C/V/F/H/G/A`, `F3`, `Shift+F3`, `F5`, `Del`, `Alt+F4` | Match; `Ctrl+W` and tab-cycling shortcuts are added |
@@ -93,12 +94,13 @@ Beyond classic Notepad, aligned with modern Notepad where an equivalent exists:
 
 Walk this list when validating a release:
 
-- **File:** New Tab, Open, Save, Save As, Close Tab, Recent Files, Page Setup,
+- **File:** New Tab, Open, Save, Save As, Save All, Close Tab, Recent Files, Page Setup,
   Print, Exit.
 - **Edit:** Undo, Cut, Copy, Paste, Delete, Find, Find Next, Find Previous,
   Replace, Go To, Select All, Time/Date, Duplicate/Delete Line, Move Line
   Up/Down.
-- **Format:** Word Wrap, Font.
+- **Format:** Word Wrap, Font, Right-to-Left Reading Order (type Arabic or
+  Hebrew; check caret, selection, and clicks).
 - **View:** Zoom In/Out/Restore, Line Numbers, Status Bar, Dark Mode, Follow
   Tail.
 - **Help:** Set as Default Text Editor, About.

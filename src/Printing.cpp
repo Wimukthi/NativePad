@@ -97,7 +97,8 @@ bool PrintDocument(PrintJob& job, std::wstring& error) {
     std::wstring_view line;
     while (ok && NextPrintLine(job.text, offset, line)) {
         RECT measureRect{pageRect.left, y, pageRect.right, pageRect.bottom};
-        const UINT format = DT_NOPREFIX | DT_EXPANDTABS | (job.wordWrap ? DT_WORDBREAK : DT_SINGLELINE);
+        const UINT format = DT_NOPREFIX | DT_EXPANDTABS | (job.wordWrap ? DT_WORDBREAK : DT_SINGLELINE) |
+                            (job.rightToLeft ? DT_RTLREADING | DT_RIGHT : 0);
         int textHeight = lineHeight;
         if (!line.empty()) {
             RECT calcRect{pageRect.left, 0, pageRect.right, pageRect.bottom};

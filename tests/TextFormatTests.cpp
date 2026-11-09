@@ -86,5 +86,23 @@ void RunTextFormatTests() {
         throw std::runtime_error("ANSI encode unexpectedly accepted unsupported text");
     }
 
+    std::vector<std::size_t> offsets;
+    // "a", Arabic alef (2 bytes), euro sign (3 bytes), U+1F600 (4 bytes, 2 units).
+    const std::string mixed("a\xD8\xA7\xE2\x82\xAC\xF0\x9F\x98\x80", 10);
+    if (!NativePad::MapUtf16IndicesToUtf8Bytes(mixed, 5, offsets) ||
+        offsets != std::vector<std::size_t>{0, 1, 3, 6, 6, 10}) {
+        throw std::runtime_error("UTF-8 index map for mixed widths");
+    }
+    if (NativePad::MapUtf16IndicesToUtf8Bytes(mixed, 4, offsets) || !offsets.empty()) {
+        throw std::runtime_error("UTF-8 index map accepted a wrong UTF-16 length");
+    }
+    if (NativePad::MapUtf16IndicesToUtf8Bytes(std::string("\xD8", 1), 1, offsets)) {
+        throw std::runtime_error("UTF-8 index map accepted a truncated sequence");
+    }
+    if (!NativePad::MapUtf16IndicesToUtf8Bytes(std::string_view{}, 0, offsets) ||
+        offsets != std::vector<std::size_t>{0}) {
+        throw std::runtime_error("UTF-8 index map for empty text");
+    }
+
     std::cout << "TextFormat tests passed\n";
 }

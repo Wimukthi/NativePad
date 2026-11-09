@@ -16,8 +16,24 @@
 
 #include "LargeTextDocument.h"
 #include "MappedTextDocument.h"
+#include "TextFormat.h"
 
 namespace NativePad {
+
+struct EditorView::RowGeometry {
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+    std::wstring text;
+    // Text index -> document-unit offset within the segment, with
+    // text.size() + 1 entries. Empty means the two coordinate spaces match
+    // (UTF-16 backends and single-byte code pages).
+    std::vector<std::size_t> indexToUnit;
+    std::size_t lineStart{0};
+    std::size_t segmentStart{0};
+    std::size_t segmentEnd{0};
+    // Left edge of the grid row or the layout box, in DIPs, after scrolling.
+    float originX{0.0f};
+    float boxWidth{0.0f};
+};
 
 namespace {
 
@@ -71,6 +87,31 @@ bool IsWordTokenChar(wchar_t value) noexcept {
 
 bool IsSelectablePunctuation(wchar_t value) noexcept {
     return !IsLineBreak(value) && !iswspace(value) && !IsWordTokenChar(value);
+}
+
+// Characters below U+0300 (ASCII, Latin-1, Latin Extended, IPA) render one
+// monospace cell each in the usual editor fonts. Anything above (combining
+// marks, Greek/Cyrillic in fallback fonts, Hebrew, Arabic, Indic, CJK, emoji)
+// may be shaped, reordered, or a different width, so it needs a real layout.
+bool NeedsComplexLayout(std::wstring_view text) noexcept {
+    return std::any_of(text.begin(), text.end(), [](wchar_t ch) { return ch >= 0x0300; });
+}
+
+// Layout-relative x of the caret before text index `index`.
+float LayoutCaretX(IDWriteTextLayout* layout, std::size_t index, std::size_t length, bool rightToLeft, float boxWidth) {
+    if (length == 0) {
+        return rightToLeft ? boxWidth : 0.0f;
+    }
+
+    FLOAT x = 0.0f;
+    FLOAT y = 0.0f;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    const bool atEnd = index >= length;
+    const UINT32 position = static_cast<UINT32>(atEnd ? length - 1 : index);
+    if (FAILED(layout->HitTestTextPosition(position, atEnd ? TRUE : FALSE, &x, &y, &metrics))) {
+        return rightToLeft ? boxWidth : 0.0f;
+    }
+    return x;
 }
 
 UINT CaretBlinkIntervalMs() noexcept {
@@ -232,6 +273,7 @@ void EditorView::RestoreState(EditorViewState state) {
     state_.caret_ = std::min(state_.caret_, length);
     state_.anchor_ = std::min(state_.anchor_, length);
     lastDoubleClickTick_ = 0;
+    measuredMaxColumns_ = 0;
     InvalidateVisualRowCache();
     UpdateScrollbars();
     ResetCaretBlink();
@@ -247,6 +289,7 @@ void EditorView::ResetView() {
     state_.horizontalColumn_ = 0;
     state_.desiredColumn_ = 0;
     lastDoubleClickTick_ = 0;
+    measuredMaxColumns_ = 0;
     state_.undoStack_.clear();
     state_.redoStack_.clear();
     state_.initialized_ = true;
@@ -411,6 +454,35 @@ bool EditorView::ShowLineNumbers() const noexcept {
     return showLineNumbers_;
 }
 
+void EditorView::SetRightToLeft(bool enabled) {
+    if (rightToLeft_ == enabled) {
+        return;
+    }
+
+    rightToLeft_ = enabled;
+    measuredMaxColumns_ = 0;
+    state_.horizontalColumn_ = 0;
+    if (hwnd_ != nullptr) {
+        // Like an RTL edit control, keep the vertical scrollbar on the side
+        // where lines start.
+        LONG_PTR exStyle = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
+        exStyle = enabled ? (exStyle | WS_EX_LEFTSCROLLBAR) : (exStyle & ~static_cast<LONG_PTR>(WS_EX_LEFTSCROLLBAR));
+        SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, exStyle);
+        SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+    ScrollToCaret();
+    UpdateScrollbars();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+bool EditorView::RightToLeft() const noexcept {
+    return rightToLeft_;
+}
+
+void EditorView::CancelReadingOrderShortcut() noexcept {
+    pendingReadingOrder_ = 0;
+}
+
 void EditorView::SetReadOnly(bool readOnly) noexcept {
     readOnly_ = readOnly;
 }
@@ -527,6 +599,7 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_KILLFOCUS:
+        pendingReadingOrder_ = 0;
         StopCaretBlink();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
@@ -552,6 +625,7 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_SYSKEYDOWN:
+        pendingReadingOrder_ = 0;
         if (parent_ != nullptr && (wParam == VK_MENU || wParam == VK_F10 || IsTopLevelMenuMnemonic(wParam))) {
             SendMessageW(parent_, message, wParam, lParam);
             return 0;
@@ -567,13 +641,38 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         OnCharacter(static_cast<wchar_t>(wParam));
         return 0;
     case WM_KEYDOWN:
+        // Classic edit-control shortcut: Ctrl+Right Shift switches to
+        // right-to-left, Ctrl+Left Shift back to left-to-right. It fires on
+        // release, and only when no other key was pressed in between, so
+        // Ctrl+Shift+<key> accelerators never flip the direction. AltGr
+        // reports as Ctrl+Alt, so an Alt press also disarms it.
+        if (wParam == VK_SHIFT || wParam == VK_CONTROL) {
+            if (IsControlDown() && IsShiftDown() && (GetKeyState(VK_MENU) & 0x8000) == 0) {
+                pendingReadingOrder_ = (GetKeyState(VK_RSHIFT) & 0x8000) != 0 ? 1 : 2;
+            }
+        } else {
+            pendingReadingOrder_ = 0;
+        }
         if (parent_ != nullptr && wParam == VK_F10) {
             SendMessageW(parent_, message, wParam, lParam);
             return 0;
         }
         OnKeyDown(wParam);
         return 0;
+    case WM_KEYUP:
+        if (wParam == VK_SHIFT || wParam == VK_CONTROL) {
+            const int pending = pendingReadingOrder_;
+            pendingReadingOrder_ = 0;
+            if (pending != 0 && parent_ != nullptr) {
+                SendMessageW(parent_, WM_EDITOR_READING_ORDER_REQUEST, pending == 1 ? 1 : 0, 0);
+                return 0;
+            }
+        } else {
+            pendingReadingOrder_ = 0;
+        }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_LBUTTONDOWN:
+        pendingReadingOrder_ = 0;
         SetFocus(hwnd_);
         OnMouseDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), IsShiftDown());
         return 0;
@@ -644,7 +743,11 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         return 0;
     }
     case WM_HSCROLL: {
-        std::size_t next = state_.horizontalColumn_;
+        // In right-to-left mode lines start at the right edge, so the
+        // scrollbar is mirrored: its rightmost position shows line starts.
+        const std::size_t maxColumn = MaxHorizontalScrollColumn();
+        const std::size_t current = std::min(state_.horizontalColumn_, maxColumn);
+        std::size_t next = rightToLeft_ ? maxColumn - current : current;
         switch (LOWORD(wParam)) {
         case SB_LINELEFT:
             next = next > 0 ? next - 1 : 0;
@@ -670,7 +773,8 @@ LRESULT EditorView::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             break;
         }
 
-        state_.horizontalColumn_ = std::min(next, MaxHorizontalScrollColumn());
+        next = std::min(next, maxColumn);
+        state_.horizontalColumn_ = rightToLeft_ ? maxColumn - next : next;
         UpdateScrollPositions();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
@@ -703,8 +807,6 @@ void EditorView::Paint() {
     const std::size_t lastRow = std::min(totalRows, firstRow + visibleRows);
     const std::size_t selectionStart = SelectionStart();
     const std::size_t selectionEnd = SelectionEnd();
-    const float xOrigin = wordWrap_ ? textLeft : textLeft - (static_cast<float>(state_.horizontalColumn_) * charWidth_);
-    const std::size_t wrapColumns = WrapColumnCount();
     bool haveHighlightedLine = false;
     std::size_t highlightedLine = 0;
     std::wstring highlightedLineText;
@@ -746,53 +848,72 @@ void EditorView::Paint() {
         impl_->target->PushAxisAlignedClip(textClip, D2D1_ANTIALIAS_MODE_ALIASED);
     }
 
+    const bool caretShown = hasTextClip && GetFocus() == hwnd_ && caretVisible_;
+    const std::size_t caretRow = caretShown ? CaretVisualRowIndex() : SIZE_MAX;
+    RowGeometry geometry;
+    std::vector<DWRITE_HIT_TEST_METRICS> selectionRects;
+
     for (std::size_t row = firstRow; row < lastRow; ++row) {
         const VisualRow visual = wordWrap_ ? VisualRowFromIndex(row) : VisualRow{row, 0, LineLength(row)};
         const float y = topPadding + (static_cast<float>(row - firstRow) * lineHeight_);
-        const std::size_t lineStart = LineStart(visual.line);
-        const std::size_t lineEnd = LineEnd(visual.line);
-        const std::size_t segmentStart = std::min(lineStart + visual.columnStart, lineEnd);
-        const std::size_t segmentEnd = wordWrap_
-                                           ? std::min(lineStart + visual.columnStart + wrapColumns, lineEnd)
-                                           : lineEnd;
+        BuildRowGeometry(visual, geometry);
+        const std::size_t segmentStart = geometry.segmentStart;
+        const std::size_t segmentEnd = geometry.segmentEnd;
+        const std::wstring& text = geometry.text;
 
         if (hasTextClip && selectionStart != selectionEnd) {
             const std::size_t selectedStart = std::max(selectionStart, segmentStart);
             const std::size_t selectedEnd = std::min(selectionEnd, segmentEnd);
             if (selectedStart < selectedEnd) {
-                const float sx = xOrigin + (static_cast<float>(selectedStart - segmentStart) * charWidth_);
-                const float ex = xOrigin + (static_cast<float>(selectedEnd - segmentStart) * charWidth_);
-                impl_->target->FillRectangle(D2D1::RectF(sx, y, ex, y + lineHeight_), impl_->selectionBrush.Get());
+                if (geometry.layout) {
+                    // Bidi text can turn one logical range into several
+                    // visual pieces, so ask DirectWrite for every rectangle.
+                    const std::size_t startIndex = RowUnitToIndex(geometry, selectedStart - segmentStart);
+                    const std::size_t endIndex = RowUnitToIndex(geometry, selectedEnd - segmentStart);
+                    UINT32 count = 0;
+                    if (endIndex > startIndex && endIndex - startIndex <= UINT32_MAX) {
+                        const auto start32 = static_cast<UINT32>(startIndex);
+                        const auto length32 = static_cast<UINT32>(endIndex - startIndex);
+                        geometry.layout->HitTestTextRange(start32, length32, 0.0f, 0.0f, nullptr, 0, &count);
+                        if (count > 0) {
+                            selectionRects.resize(count);
+                            if (SUCCEEDED(geometry.layout->HitTestTextRange(start32, length32, 0.0f, 0.0f, selectionRects.data(), count, &count))) {
+                                for (UINT32 i = 0; i < count; ++i) {
+                                    const float sx = geometry.originX + selectionRects[i].left;
+                                    const float ex = sx + selectionRects[i].width;
+                                    impl_->target->FillRectangle(D2D1::RectF(sx, y, ex, y + lineHeight_), impl_->selectionBrush.Get());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    const float sx = geometry.originX + (static_cast<float>(selectedStart - segmentStart) * charWidth_);
+                    const float ex = geometry.originX + (static_cast<float>(selectedEnd - segmentStart) * charWidth_);
+                    impl_->target->FillRectangle(D2D1::RectF(sx, y, ex, y + lineHeight_), impl_->selectionBrush.Get());
+                }
             }
         }
 
-        const std::wstring text = DocumentTextRange(segmentStart, segmentEnd - segmentStart);
         if (hasTextClip && !text.empty()) {
-            if (syntaxLanguage_ == SyntaxLanguage::PlainText) {
+            if (!geometry.layout) {
                 impl_->target->DrawTextW(
                     text.c_str(),
                     static_cast<UINT32>(text.size()),
                     impl_->textFormat.Get(),
-                    D2D1::RectF(xOrigin, y, width + std::abs(xOrigin) + 2048.0f, y + lineHeight_),
+                    D2D1::RectF(geometry.originX, y, width + std::abs(geometry.originX) + 2048.0f, y + lineHeight_),
                     impl_->textBrush.Get(),
                     D2D1_DRAW_TEXT_OPTIONS_CLIP);
             } else {
-                Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
-                const float layoutWidth = width + std::abs(xOrigin) + 2048.0f;
-                if (SUCCEEDED(impl_->dwriteFactory->CreateTextLayout(
-                        text.c_str(),
-                        static_cast<UINT32>(text.size()),
-                        impl_->textFormat.Get(),
-                        layoutWidth,
-                        lineHeight_,
-                        layout.GetAddressOf()))) {
+                if (syntaxLanguage_ != SyntaxLanguage::PlainText) {
                     if (!haveHighlightedLine || highlightedLine != visual.line) {
                         highlightedLine = visual.line;
-                        highlightedLineText = DocumentTextRange(lineStart, lineEnd - lineStart);
+                        highlightedLineText = DocumentTextRange(geometry.lineStart, LineEnd(visual.line) - geometry.lineStart);
                         highlightedSpans = syntaxHighlighter_.HighlightLine(syntaxLanguage_, highlightedLineText);
                         haveHighlightedLine = true;
                     }
-                    const std::size_t segmentOffset = segmentStart - lineStart;
+                    // Highlighting runs on editable UTF-16 documents only, where
+                    // document units and text indices are the same.
+                    const std::size_t segmentOffset = segmentStart - geometry.lineStart;
                     for (const SyntaxSpan& span : highlightedSpans) {
                         const std::size_t spanStart = std::max(span.start, segmentOffset);
                         const std::size_t spanEnd = std::min(span.start + span.length, segmentOffset + text.size());
@@ -808,25 +929,19 @@ void EditorView::Paint() {
                         const DWRITE_TEXT_RANGE range{
                             static_cast<UINT32>(spanStart - segmentOffset),
                             static_cast<UINT32>(spanEnd - spanStart)};
-                        layout->SetDrawingEffect(brush, range);
+                        geometry.layout->SetDrawingEffect(brush, range);
                     }
-                    impl_->target->DrawTextLayout(
-                        D2D1::Point2F(xOrigin, y),
-                        layout.Get(),
-                        impl_->textBrush.Get(),
-                        D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
+                impl_->target->DrawTextLayout(
+                    D2D1::Point2F(geometry.originX, y),
+                    geometry.layout.Get(),
+                    impl_->textBrush.Get(),
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         }
-    }
 
-    if (hasTextClip && GetFocus() == hwnd_ && caretVisible_) {
-        const std::size_t caretRow = wordWrap_ ? VisualRowIndexForPosition(state_.caret_) : LineFromPosition(state_.caret_);
-        if (caretRow >= firstRow && caretRow < lastRow) {
-            const VisualRow visual = wordWrap_ ? VisualRowFromIndex(caretRow) : VisualRow{caretRow, 0, LineLength(caretRow)};
-            const std::size_t segmentStart = LineStart(visual.line) + visual.columnStart;
-            const float x = xOrigin + (static_cast<float>(state_.caret_ - segmentStart) * charWidth_);
-            const float y = topPadding + (static_cast<float>(caretRow - firstRow) * lineHeight_);
+        if (row == caretRow && state_.caret_ >= segmentStart) {
+            const float x = RowCaretX(geometry, state_.caret_ - segmentStart);
             impl_->target->DrawLine(D2D1::Point2F(x, y), D2D1::Point2F(x, y + lineHeight_), impl_->caretBrush.Get(), 1.0f);
         }
     }
@@ -938,6 +1053,7 @@ void EditorView::RecreateTextFormat() {
 
     impl_->textFormat.Reset();
     impl_->lineNumberFormat.Reset();
+    measuredMaxColumns_ = 0;
     const float renderedSize = std::max(1.0f, font_.sizeDips * static_cast<float>(zoomPercent_) / 100.0f);
     if (SUCCEEDED(impl_->dwriteFactory->CreateTextFormat(
             font_.family.c_str(),
@@ -1073,7 +1189,7 @@ void EditorView::UpdateScrollbars() {
         return;
     }
 
-    const std::size_t maxLineLength = IndexedMaxLineLength();
+    const std::size_t maxLineLength = std::max(IndexedMaxLineLength(), measuredMaxColumns_);
     const int visibleColumns = std::max(1, static_cast<int>(TextViewportWidthDips() / std::max(1.0f, charWidth_)));
     const std::size_t maxScrollPosition = MaxHorizontalScrollColumn();
     if (maxScrollPosition == 0) {
@@ -1091,7 +1207,7 @@ void EditorView::UpdateScrollbars() {
     horizontal.nMin = 0;
     horizontal.nMax = static_cast<int>(std::min<std::size_t>(maxLineLength, INT_MAX));
     horizontal.nPage = static_cast<UINT>(visibleColumns);
-    horizontal.nPos = static_cast<int>(state_.horizontalColumn_);
+    horizontal.nPos = static_cast<int>(rightToLeft_ ? maxScrollPosition - state_.horizontalColumn_ : state_.horizontalColumn_);
     SetScrollInfo(hwnd_, SB_HORZ, &horizontal, TRUE);
 }
 
@@ -1103,7 +1219,10 @@ void EditorView::UpdateScrollPositions() {
     const std::size_t verticalPosition = wordWrap_ ? state_.firstVisualRow_ : state_.firstLine_;
     SetScrollPos(hwnd_, SB_VERT, static_cast<int>(std::min<std::size_t>(verticalPosition, static_cast<std::size_t>(INT_MAX))), TRUE);
     if (!wordWrap_) {
-        SetScrollPos(hwnd_, SB_HORZ, static_cast<int>(std::min<std::size_t>(state_.horizontalColumn_, static_cast<std::size_t>(INT_MAX))), TRUE);
+        const std::size_t maxColumn = MaxHorizontalScrollColumn();
+        const std::size_t column = std::min(state_.horizontalColumn_, maxColumn);
+        const std::size_t position = rightToLeft_ ? maxColumn - column : column;
+        SetScrollPos(hwnd_, SB_HORZ, static_cast<int>(std::min<std::size_t>(position, static_cast<std::size_t>(INT_MAX))), TRUE);
     }
 }
 
@@ -1138,7 +1257,7 @@ void EditorView::ScrollToCaret() {
     const std::size_t visibleLines = VisibleRowCount();
 
     if (wordWrap_) {
-        const std::size_t caretRow = VisualRowIndexForPosition(state_.caret_);
+        const std::size_t caretRow = CaretVisualRowIndex();
         if (caretRow < state_.firstVisualRow_) {
             state_.firstVisualRow_ = caretRow;
         } else if (caretRow >= state_.firstVisualRow_ + visibleLines) {
@@ -1155,7 +1274,18 @@ void EditorView::ScrollToCaret() {
         state_.firstLine_ = caretLine - visibleLines + 1;
     }
 
-    const std::size_t column = state_.caret_ - LineStart(caretLine);
+    // Scroll in grid columns measured from the edge where the line starts. A
+    // laid-out row reports its real caret offset, which differs from the
+    // character count for shaped, reordered, or wide text.
+    std::size_t column = state_.caret_ - LineStart(caretLine);
+    if (HasDocument()) {
+        RowGeometry geometry;
+        BuildRowGeometry(VisualRow{caretLine, 0, LineLength(caretLine)}, geometry);
+        if (geometry.layout && state_.caret_ >= geometry.segmentStart) {
+            const float offset = RowCaretOffsetDips(geometry, state_.caret_ - geometry.segmentStart);
+            column = static_cast<std::size_t>(std::max(0.0f, std::floor(offset / std::max(1.0f, charWidth_))));
+        }
+    }
     const std::size_t visibleColumns = std::max<std::size_t>(1, static_cast<std::size_t>(TextViewportWidthDips() / std::max(1.0f, charWidth_)));
     if (column < state_.horizontalColumn_) {
         state_.horizontalColumn_ = column;
@@ -1194,7 +1324,7 @@ void EditorView::MoveCaretHorizontal(int delta, bool extendSelection) {
 
 void EditorView::MoveCaretVertical(int delta, bool extendSelection) {
     if (wordWrap_) {
-        const std::size_t currentRow = VisualRowIndexForPosition(state_.caret_);
+        const std::size_t currentRow = CaretVisualRowIndex();
         const std::size_t totalRows = TotalVisualRows();
         const std::size_t nextRow = delta < 0
                                         ? (currentRow > 0 ? currentRow - 1 : 0)
@@ -1408,11 +1538,13 @@ void EditorView::OnKeyDown(WPARAM key) {
     }
 
     switch (key) {
+    // Arrow keys move in reading direction: with right-to-left reading order
+    // Left advances through the text, as in an RTL edit control.
     case VK_LEFT:
-        MoveCaretHorizontal(-1, shift);
+        MoveCaretHorizontal(rightToLeft_ ? 1 : -1, shift);
         break;
     case VK_RIGHT:
-        MoveCaretHorizontal(1, shift);
+        MoveCaretHorizontal(rightToLeft_ ? -1 : 1, shift);
         break;
     case VK_UP:
         MoveCaretVertical(-1, shift);
@@ -1558,13 +1690,20 @@ void EditorView::UpdateDragSelection(int x, int y) {
     }
 
     if (!wordWrap_) {
+        // horizontalColumn_ counts columns scrolled away from the line-start
+        // edge, which is the right edge in right-to-left mode.
         const std::size_t maximumHorizontal = MaxHorizontalScrollColumn();
+        std::size_t towardStart = 0;
+        std::size_t towardEnd = 0;
         if (x < client.left) {
-            const std::size_t amount = scrollAmount(client.left - x, columnPixels);
-            state_.horizontalColumn_ = state_.horizontalColumn_ > amount ? state_.horizontalColumn_ - amount : 0;
+            (rightToLeft_ ? towardEnd : towardStart) = scrollAmount(client.left - x, columnPixels);
         } else if (x >= client.right) {
-            const std::size_t amount = scrollAmount(x - client.right + 1, columnPixels);
-            state_.horizontalColumn_ = std::min(state_.horizontalColumn_ + amount, maximumHorizontal);
+            (rightToLeft_ ? towardStart : towardEnd) = scrollAmount(x - client.right + 1, columnPixels);
+        }
+        if (towardStart != 0) {
+            state_.horizontalColumn_ = state_.horizontalColumn_ > towardStart ? state_.horizontalColumn_ - towardStart : 0;
+        } else if (towardEnd != 0) {
+            state_.horizontalColumn_ = std::min(state_.horizontalColumn_ + towardEnd, maximumHorizontal);
         }
     }
 
@@ -1663,17 +1802,175 @@ std::size_t EditorView::HitTest(int x, int y) const {
     const float xDip = PixelsToDips(x);
     const float yDip = PixelsToDips(y);
     const int lineOffset = std::max(0, static_cast<int>((yDip - static_cast<float>(kTopPadding)) / lineHeight_));
-    if (wordWrap_) {
-        const VisualRow visual = VisualRowFromIndex(state_.firstVisualRow_ + static_cast<std::size_t>(lineOffset));
-        const int rawColumn = static_cast<int>(std::round((xDip - TextLeftDips()) / charWidth_));
-        const std::size_t column = visual.columnStart + static_cast<std::size_t>(std::max(0, rawColumn));
-        return PositionFromLineColumn(visual.line, std::min(column, visual.columnStart + visual.length));
+    if (!HasDocument() || IndexedLineCount() == 0) {
+        return 0;
     }
 
-    const std::size_t line = std::min(state_.firstLine_ + static_cast<std::size_t>(lineOffset), IndexedLineCount() - 1);
-    const int rawColumn = static_cast<int>(std::round((xDip - TextLeftDips()) / charWidth_));
-    const std::size_t column = static_cast<std::size_t>(std::max(0, rawColumn)) + state_.horizontalColumn_;
-    return PositionFromLineColumn(line, std::min(column, LineLength(line)));
+    VisualRow visual;
+    if (wordWrap_) {
+        visual = VisualRowFromIndex(state_.firstVisualRow_ + static_cast<std::size_t>(lineOffset));
+    } else {
+        const std::size_t line = std::min(state_.firstLine_ + static_cast<std::size_t>(lineOffset), IndexedLineCount() - 1);
+        visual = VisualRow{line, 0, LineLength(line)};
+    }
+
+    RowGeometry geometry;
+    BuildRowGeometry(visual, geometry);
+    return geometry.segmentStart + RowHitTest(geometry, xDip);
+}
+
+void EditorView::BuildRowGeometry(const VisualRow& visual, RowGeometry& geometry) const {
+    geometry.layout.Reset();
+    geometry.indexToUnit.clear();
+    geometry.lineStart = LineStart(visual.line);
+    const std::size_t lineEnd = LineEnd(visual.line);
+    geometry.segmentStart = std::min(geometry.lineStart + visual.columnStart, lineEnd);
+    geometry.segmentEnd = wordWrap_
+                              ? std::min(geometry.lineStart + visual.columnStart + WrapColumnCount(), lineEnd)
+                              : lineEnd;
+    const std::size_t units = geometry.segmentEnd - geometry.segmentStart;
+    geometry.text = DocumentTextRange(geometry.segmentStart, units);
+
+    const float textLeft = TextLeftDips();
+    const float scroll = wordWrap_ ? 0.0f : static_cast<float>(state_.horizontalColumn_) * charWidth_;
+    geometry.originX = textLeft - scroll;
+    geometry.boxWidth = 0.0f;
+
+    bool needsLayout = rightToLeft_ || syntaxLanguage_ != SyntaxLanguage::PlainText;
+    if (geometry.text.size() != units) {
+        // Byte-backed large files decode multibyte UTF-8 to fewer UTF-16 units,
+        // so text indices need their own map back to byte offsets.
+        needsLayout = true;
+        std::string bytes;
+        bytes.reserve(units);
+        for (std::size_t i = 0; i < units; ++i) {
+            bytes.push_back(static_cast<char>(DocumentCharAt(geometry.segmentStart + i) & 0xFF));
+        }
+        if (!MapUtf16IndicesToUtf8Bytes(bytes, geometry.text.size(), geometry.indexToUnit)) {
+            // A multibyte code page or a wrap boundary inside a sequence:
+            // spread the units proportionally so positions stay monotonic.
+            const std::size_t length = geometry.text.size();
+            geometry.indexToUnit.resize(length + 1);
+            for (std::size_t i = 0; i <= length; ++i) {
+                geometry.indexToUnit[i] = length == 0 ? 0 : (i * units) / length;
+            }
+        }
+    } else if (!needsLayout) {
+        needsLayout = NeedsComplexLayout(geometry.text);
+    }
+
+    if (!needsLayout || !impl_->dwriteFactory || !impl_->textFormat || geometry.text.size() > UINT32_MAX) {
+        geometry.indexToUnit.clear();
+        return;
+    }
+
+    const float viewportWidth = TextViewportWidthDips();
+    const float maxWidth = rightToLeft_ ? viewportWidth : ClientWidthDips() + std::abs(geometry.originX) + 2048.0f;
+    if (FAILED(impl_->dwriteFactory->CreateTextLayout(
+            geometry.text.c_str(),
+            static_cast<UINT32>(geometry.text.size()),
+            impl_->textFormat.Get(),
+            maxWidth,
+            lineHeight_,
+            geometry.layout.GetAddressOf()))) {
+        geometry.layout.Reset();
+        geometry.indexToUnit.clear();
+        return;
+    }
+
+    geometry.layout->SetReadingDirection(rightToLeft_ ? DWRITE_READING_DIRECTION_RIGHT_TO_LEFT : DWRITE_READING_DIRECTION_LEFT_TO_RIGHT);
+    geometry.layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+
+    DWRITE_TEXT_METRICS metrics{};
+    const float contentWidth = SUCCEEDED(geometry.layout->GetMetrics(&metrics)) ? metrics.widthIncludingTrailingWhitespace : 0.0f;
+    if (rightToLeft_) {
+        // Anchor the line's start at the right edge of the viewport. A line
+        // wider than the viewport grows the box leftwards instead of relying
+        // on how DirectWrite overflows a too-narrow box; scrolling then moves
+        // the box right to reveal the rest of the line.
+        float boxWidth = viewportWidth;
+        if (contentWidth > viewportWidth) {
+            boxWidth = std::ceil(contentWidth);
+            geometry.layout->SetMaxWidth(boxWidth);
+        }
+        geometry.originX = textLeft + viewportWidth - boxWidth + scroll;
+        geometry.boxWidth = boxWidth;
+    } else {
+        geometry.boxWidth = maxWidth;
+    }
+
+    const auto columns = static_cast<std::size_t>(std::ceil(contentWidth / std::max(1.0f, charWidth_)));
+    measuredMaxColumns_ = std::max(measuredMaxColumns_, columns);
+}
+
+std::size_t EditorView::RowUnitToIndex(const RowGeometry& geometry, std::size_t unitOffset) const noexcept {
+    const std::size_t length = geometry.text.size();
+    if (geometry.indexToUnit.empty()) {
+        return std::min(unitOffset, length);
+    }
+    const auto it = std::lower_bound(geometry.indexToUnit.begin(), geometry.indexToUnit.end(), unitOffset);
+    return std::min(static_cast<std::size_t>(it - geometry.indexToUnit.begin()), length);
+}
+
+std::size_t EditorView::RowIndexToUnit(const RowGeometry& geometry, std::size_t index) const noexcept {
+    const std::size_t units = geometry.segmentEnd - geometry.segmentStart;
+    if (geometry.indexToUnit.empty()) {
+        return std::min(index, units);
+    }
+    return std::min(geometry.indexToUnit[std::min(index, geometry.indexToUnit.size() - 1)], units);
+}
+
+float EditorView::RowCaretOffsetDips(const RowGeometry& geometry, std::size_t unitOffset) const {
+    if (!geometry.layout) {
+        return static_cast<float>(unitOffset) * charWidth_;
+    }
+    const float x = LayoutCaretX(geometry.layout.Get(), RowUnitToIndex(geometry, unitOffset), geometry.text.size(), rightToLeft_, geometry.boxWidth);
+    return rightToLeft_ ? geometry.boxWidth - x : x;
+}
+
+float EditorView::RowCaretX(const RowGeometry& geometry, std::size_t unitOffset) const {
+    if (!geometry.layout) {
+        return geometry.originX + (static_cast<float>(unitOffset) * charWidth_);
+    }
+    return geometry.originX + LayoutCaretX(geometry.layout.Get(), RowUnitToIndex(geometry, unitOffset), geometry.text.size(), rightToLeft_, geometry.boxWidth);
+}
+
+std::size_t EditorView::RowHitTest(const RowGeometry& geometry, float xDip) const {
+    const std::size_t units = geometry.segmentEnd - geometry.segmentStart;
+    if (!geometry.layout) {
+        const int rawColumn = static_cast<int>(std::round((xDip - geometry.originX) / charWidth_));
+        return std::min(static_cast<std::size_t>(std::max(0, rawColumn)), units);
+    }
+    if (geometry.text.empty()) {
+        return 0;
+    }
+
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(geometry.layout->HitTestPoint(xDip - geometry.originX, lineHeight_ * 0.5f, &trailing, &inside, &metrics))) {
+        return 0;
+    }
+    const std::size_t index = static_cast<std::size_t>(metrics.textPosition) + (trailing ? metrics.length : 0);
+    return RowIndexToUnit(geometry, index);
+}
+
+std::size_t EditorView::CaretVisualRowIndex() const {
+    if (!wordWrap_) {
+        return LineFromPosition(state_.caret_);
+    }
+
+    // A caret at the end of a line that exactly fills its last wrapped row
+    // computes to the row after it, which belongs to the next line. Keep it on
+    // the row whose text it follows.
+    std::size_t row = std::min(VisualRowIndexForPosition(state_.caret_), TotalVisualRows() - 1);
+    if (row > 0) {
+        const VisualRow visual = VisualRowFromIndex(row);
+        if (LineStart(visual.line) + visual.columnStart > state_.caret_) {
+            --row;
+        }
+    }
+    return row;
 }
 
 std::size_t EditorView::LineStart(std::size_t line) const {
@@ -1896,7 +2193,7 @@ std::size_t EditorView::MaxHorizontalScrollColumn() const {
     if (wordWrap_) {
         return 0;
     }
-    const std::size_t maxLineLength = IndexedMaxLineLength();
+    const std::size_t maxLineLength = std::max(IndexedMaxLineLength(), measuredMaxColumns_);
     const std::size_t visibleColumns = std::max<std::size_t>(
         1,
         static_cast<std::size_t>(TextViewportWidthDips() / std::max(1.0f, charWidth_)));

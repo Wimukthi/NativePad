@@ -8,6 +8,59 @@
 
 namespace NativePad {
 
+bool MapUtf16IndicesToUtf8Bytes(
+    std::string_view bytes,
+    std::size_t utf16Length,
+    std::vector<std::size_t>& indexToByte) {
+    indexToByte.clear();
+    indexToByte.reserve(utf16Length + 1);
+
+    auto isContinuation = [&](std::size_t index) {
+        return index < bytes.size() && (static_cast<unsigned char>(bytes[index]) & 0xC0u) == 0x80u;
+    };
+
+    std::size_t position = 0;
+    while (position < bytes.size()) {
+        const auto lead = static_cast<unsigned char>(bytes[position]);
+        std::size_t sequenceLength = 0;
+        std::size_t units = 1;
+        if (lead < 0x80u) {
+            sequenceLength = 1;
+        } else if (lead >= 0xC2u && lead <= 0xDFu) {
+            sequenceLength = 2;
+        } else if (lead >= 0xE0u && lead <= 0xEFu) {
+            sequenceLength = 3;
+        } else if (lead >= 0xF0u && lead <= 0xF4u) {
+            sequenceLength = 4;
+            units = 2;
+        } else {
+            indexToByte.clear();
+            return false;
+        }
+
+        for (std::size_t i = 1; i < sequenceLength; ++i) {
+            if (!isContinuation(position + i)) {
+                indexToByte.clear();
+                return false;
+            }
+        }
+
+        // A supplementary character's low surrogate maps to the same first
+        // byte, so a caret can never land inside a multibyte sequence.
+        for (std::size_t i = 0; i < units; ++i) {
+            indexToByte.push_back(position);
+        }
+        position += sequenceLength;
+    }
+
+    if (indexToByte.size() != utf16Length) {
+        indexToByte.clear();
+        return false;
+    }
+    indexToByte.push_back(bytes.size());
+    return true;
+}
+
 namespace {
 
 std::optional<std::vector<char>> WideToCodePage(UINT codePage, std::wstring_view text, DWORD flags, bool failOnDefaultChar) {

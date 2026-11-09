@@ -11,6 +11,29 @@ incremented automatically and does not by itself imply a release.
 
 Nothing yet.
 
+## [1.3.0.1] - 2026-11-09
+
+### Added
+
+- **Format > Right-to-Left Reading Order** (also on the editor context menu)
+  for Arabic, Persian, Hebrew, and other right-to-left text. Lines start at the
+  right edge with a right-to-left base direction, arrow keys follow the reading
+  direction, the vertical scrollbar moves to the left, and printing follows the
+  same order. `Ctrl+Right Shift` and `Ctrl+Left Shift` switch direction as in a
+  classic edit control. The setting persists as `RightToLeft`.
+  ([#1](https://github.com/Wimukthi/NativePad/issues/1))
+- **File > Save All** saves every tab with unsaved changes, prompting for a
+  name only for untitled tabs. ([#1](https://github.com/Wimukthi/NativePad/issues/1))
+
+### Fixed
+
+- Caret placement, selection highlighting, and mouse clicks now follow the
+  rendered glyphs on lines containing Arabic, Hebrew, combining marks, CJK, or
+  other shaped text. They previously assumed one monospace cell per character,
+  so typing right-to-left text put the caret and selection in the wrong place.
+- With Word Wrap on, a caret at the end of a line that exactly fills its last
+  wrapped row stays on that row instead of disappearing.
+
 ## [1.2.1.1] - 2026-08-16
 
 ### Fixed

@@ -41,6 +41,7 @@ in [Usage](USAGE.md); this page is the inventory.
 | Feature | Notes |
 | --- | --- |
 | Word Wrap | Backed by a lazy visual-row cache |
+| Right-to-left text | Right-to-Left Reading Order toggle; bidi, shaping, caret, selection, and clicks follow DirectWrite layout |
 | Font | Custom resizable, theme-aware dialog |
 | Line Numbers | Visual gutter only; excluded from save, copy, search, and print |
 | Status Bar | Line, column, total lines, encoding, mode, size, character count, zoom |

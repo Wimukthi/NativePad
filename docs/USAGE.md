@@ -19,6 +19,7 @@ NativePad.exe "C:\logs\server.log" "C:\logs\errors.log"
 | Open | `Ctrl+O` | Opens a tab; reuses a clean empty tab and activates a file that is already open |
 | Save | `Ctrl+S` | Keeps the encoding and line endings detected on open |
 | Save As | `Ctrl+Shift+S` | Encoding picker: UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE, ANSI, OEM 437 (NFO) |
+| Save All | — | Saves every tab with unsaved changes; untitled tabs ask for a name, and cancelling stops on that tab |
 | Close Tab | `Ctrl+W` | Prompts only when that tab has unsaved changes |
 | Recent files | — | Up to eight entries, most recent first; missing files are dropped when opened |
 | Clear Recent Files | — | Empties the list |
@@ -50,6 +51,7 @@ NativePad.exe "C:\logs\server.log" "C:\logs\errors.log"
 | --- | --- |
 | Word Wrap | Wraps to the window width; the setting persists |
 | Font | Family, style, and size for the editor; the setting persists |
+| Right-to-Left Reading Order | Starts lines at the right edge with a right-to-left base direction for Arabic, Persian, Hebrew, and similar scripts. `Ctrl+Right Shift` turns it on and `Ctrl+Left Shift` turns it off; the setting persists |
 
 ### View
 
@@ -71,7 +73,7 @@ NativePad.exe "C:\logs\server.log" "C:\logs\errors.log"
 | About NativePad | Version, build timestamp, author, and licence — plus **Check for Updates** and the **Check automatically** toggle |
 
 Right-clicking the editor opens a context menu with Undo, Redo, Cut, Copy,
-Paste, Delete, Find, Replace, and Select All. `Alt` or `F10` reveals the
+Paste, Delete, Find, Replace, Select All, and Right-to-Left Reading Order. `Alt` or `F10` reveals the
 menu-bar mnemonics and moves focus into menu navigation; `Esc` returns focus to
 the editor.
 
@@ -213,6 +215,7 @@ Preferences live in `%LOCALAPPDATA%\NativePad\NativePad.ini` under a single
 | --- | --- |
 | `DarkModeForced`, `DarkMode` | Whether a manual theme override is set, and which theme it selects |
 | `WordWrap`, `LineNumbers`, `StatusBarVisible`, `TabBarVisible` | View toggles |
+| `RightToLeft` | Right-to-left reading order (`1`) or left-to-right (`0`) |
 | `FontFamily`, `FontSizeTenths`, `FontWeight`, `FontItalic` | Editor font (default: Consolas, 15 DIP) |
 | `WindowLeft/Top/Right/Bottom`, `WindowMaximized` | Window placement |
 | `MarginLeft/Top/Right/Bottom` | Page Setup margins, in thousandths of an inch |

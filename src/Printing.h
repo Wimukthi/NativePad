@@ -26,6 +26,7 @@ struct PrintJob {
     LOGFONTW font{};
     RECT marginsThousandths{1000, 1000, 1000, 1000};
     bool wordWrap{false};
+    bool rightToLeft{false};
 };
 
 void StartPrintWorker(PrintJob job);

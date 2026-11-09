@@ -680,6 +680,9 @@ private:
         if (auto lineNumbers = ReadSettingsDword(L"LineNumbers")) {
             preferredLineNumbers_ = *lineNumbers != 0;
         }
+        if (auto rightToLeft = ReadSettingsDword(L"RightToLeft")) {
+            preferredRightToLeft_ = *rightToLeft != 0;
+        }
         if (auto visible = ReadSettingsDword(L"StatusBarVisible")) {
             statusBarVisible_ = *visible != 0;
         }
@@ -740,6 +743,7 @@ private:
         WriteSettingsDword(L"DarkMode", darkMode_ ? 1u : 0u);
         WriteSettingsDword(L"WordWrap", editorView_.WordWrap() ? 1u : 0u);
         WriteSettingsDword(L"LineNumbers", editorView_.ShowLineNumbers() ? 1u : 0u);
+        WriteSettingsDword(L"RightToLeft", editorView_.RightToLeft() ? 1u : 0u);
         WriteSettingsDword(L"StatusBarVisible", statusBarVisible_ ? 1u : 0u);
         WriteSettingsDword(L"TabBarVisible", tabBarVisible_ ? 1u : 0u);
         WriteSettingsInt(L"MarginLeft", pageMarginsThousandths_.left);
@@ -848,6 +852,9 @@ private:
             }
             ScheduleRecoverySave();
             UpdateStatus();
+            return 0;
+        case NativePad::WM_EDITOR_READING_ORDER_REQUEST:
+            SetRightToLeft(wParam != 0);
             return 0;
         case NativePad::WM_EDITOR_CURSOR_CHANGED:
         case NativePad::WM_EDITOR_ZOOM_CHANGED:
@@ -1048,6 +1055,7 @@ private:
         editorView_.SetFont(preferredFont_);
         editorView_.SetShowLineNumbers(preferredLineNumbers_);
         editorView_.SetWordWrap(preferredWordWrap_);
+        editorView_.SetRightToLeft(preferredRightToLeft_);
         tabStrip_.OnDpiChanged(dpi_);
         tabStrip_.SetFont(UiFont());
         RefreshTabStrip();
@@ -1107,6 +1115,8 @@ private:
         formatMenu_ = CreatePopupMenu();
         AppendMenuCommand(formatMenu_, ID_FORMAT_WORD_WRAP);
         AppendMenuCommand(formatMenu_, ID_FORMAT_FONT);
+        AppendMenuSeparator(formatMenu_);
+        AppendMenuCommand(formatMenu_, ID_FORMAT_RIGHT_TO_LEFT);
 
         viewMenu_ = CreatePopupMenu();
         AppendMenuCommand(viewMenu_, ID_VIEW_ZOOM_IN);
@@ -1143,6 +1153,7 @@ private:
         AppendMenuCommand(fileMenu_, ID_FILE_OPEN);
         AppendMenuCommand(fileMenu_, ID_FILE_SAVE);
         AppendMenuCommand(fileMenu_, ID_FILE_SAVE_AS);
+        AppendMenuCommand(fileMenu_, ID_FILE_SAVE_ALL);
         AppendMenuCommand(fileMenu_, ID_FILE_CLOSE_TAB);
         AppendMenuSeparator(fileMenu_);
         AppendMenuCommand(fileMenu_, ID_FILE_PAGE_SETUP);
@@ -1194,6 +1205,10 @@ private:
         if (source == editor_) {
             return;
         }
+        // An accelerator such as Ctrl+Shift+D consumed the key between the
+        // modifier presses, so the editor's Ctrl+Shift reading-order shortcut
+        // must not fire when the modifiers are released.
+        editorView_.CancelReadingOrderShortcut();
 
         if (id >= ID_FILE_RECENT_FIRST && id <= ID_FILE_RECENT_LAST) {
             OpenRecentFile(static_cast<size_t>(id - ID_FILE_RECENT_FIRST));
@@ -1212,6 +1227,9 @@ private:
             break;
         case ID_FILE_SAVE_AS:
             SaveDocument(true);
+            break;
+        case ID_FILE_SAVE_ALL:
+            SaveAllDocuments();
             break;
         case ID_FILE_CLOSE_TAB:
             CloseTab(activeTabId_);
@@ -1285,6 +1303,9 @@ private:
             break;
         case ID_FORMAT_WORD_WRAP:
             ToggleWordWrap();
+            break;
+        case ID_FORMAT_RIGHT_TO_LEFT:
+            SetRightToLeft(!editorView_.RightToLeft());
             break;
         case ID_FORMAT_FONT:
             ShowFontChooser();
@@ -1762,6 +1783,13 @@ private:
         DestroyWindow(hwnd_);
     }
 
+    void SetRightToLeft(bool enabled) {
+        // Reading order is window-wide, like Word Wrap and the font, and
+        // persists through the normal preference save.
+        editorView_.SetRightToLeft(enabled);
+        SetFocus(editor_);
+    }
+
     void ToggleWordWrap() {
         editorView_.SetWordWrap(!editorView_.WordWrap());
         UpdateStatus();
@@ -1830,6 +1858,7 @@ private:
         job.font = LogFontFromEditorFont(editorView_.Font(), static_cast<UINT>(std::max(1, GetDeviceCaps(print.hDC, LOGPIXELSY))));
         job.marginsThousandths = pageMarginsThousandths_;
         job.wordWrap = editorView_.WordWrap();
+        job.rightToLeft = editorView_.RightToLeft();
 
         if (print.hDevMode != nullptr) {
             GlobalFree(print.hDevMode);
@@ -2018,6 +2047,8 @@ private:
             return L"&Save\tCtrl+S";
         case ID_FILE_SAVE_AS:
             return L"Save &As...\tCtrl+Shift+S";
+        case ID_FILE_SAVE_ALL:
+            return L"Save A&ll";
         case ID_FILE_CLOSE_TAB:
             return L"&Close Tab\tCtrl+W";
         case ID_FILE_PAGE_SETUP:
@@ -2068,6 +2099,8 @@ private:
             return L"&Word Wrap";
         case ID_FORMAT_FONT:
             return L"&Font...";
+        case ID_FORMAT_RIGHT_TO_LEFT:
+            return L"&Right-to-Left Reading Order\tCtrl+Right Shift";
         case ID_VIEW_STATUS_BAR:
             return L"&Status Bar";
         case ID_VIEW_TAB_BAR:
@@ -2675,6 +2708,8 @@ private:
         AppendMenuCommand(menu, ID_EDIT_REPLACE);
         AppendMenuSeparator(menu);
         AppendMenuCommand(menu, ID_EDIT_SELECT_ALL);
+        AppendMenuSeparator(menu);
+        AppendMenuCommand(menu, ID_FORMAT_RIGHT_TO_LEFT);
 
         ApplyMenuBackgroundTo(menu);
         UpdateMenuState(menu);
@@ -2861,7 +2896,9 @@ private:
         // Printing is not supported for read-only previews or editable large
         // files (whole-document pagination would materialize the entire file).
         EnableMenuItem(menu, ID_FILE_PRINT, MF_BYCOMMAND | (!ActiveSession().readOnlyPreview && !IsLargeEditable() ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(menu, ID_FILE_SAVE_ALL, MF_BYCOMMAND | (AnyTabDirty() ? MF_ENABLED : MF_GRAYED));
         CheckMenuItem(menu, ID_FORMAT_WORD_WRAP, MF_BYCOMMAND | (editorView_.WordWrap() ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(menu, ID_FORMAT_RIGHT_TO_LEFT, MF_BYCOMMAND | (editorView_.RightToLeft() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_LINE_NUMBERS, MF_BYCOMMAND | (editorView_.ShowLineNumbers() ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_STATUS_BAR, MF_BYCOMMAND | (statusBarVisible_ ? MF_CHECKED : MF_UNCHECKED));
         CheckMenuItem(menu, ID_VIEW_TAB_BAR, MF_BYCOMMAND | (tabBarVisible_ ? MF_CHECKED : MF_UNCHECKED));
@@ -3624,6 +3661,40 @@ private:
         return true;
     }
 
+    bool AnyTabDirty() const {
+        return std::any_of(tabs_.begin(), tabs_.end(), [](const auto& tab) { return tab->dirty; });
+    }
+
+    bool SaveAllDocuments() {
+        // Save goes through each tab's own Save path so encoding, line endings,
+        // large-file staging, and the Save As prompt for untitled tabs behave
+        // exactly as they do from that tab. Cancelling or failing a save stops
+        // here with that tab selected; otherwise the original tab is restored.
+        const NativePad::TabId original = activeTabId_;
+        std::vector<NativePad::TabId> dirtyTabs;
+        for (const auto& tab : tabs_) {
+            if (tab->dirty) {
+                dirtyTabs.push_back(tab->id);
+            }
+        }
+
+        for (const NativePad::TabId id : dirtyTabs) {
+            NativePad::DocumentSession* session = SessionById(id);
+            if (session == nullptr || !session->dirty || !ActivateTab(id)) {
+                continue;
+            }
+            if (!SaveDocument(false)) {
+                return false;
+            }
+        }
+
+        if (SessionById(original) != nullptr) {
+            ActivateTab(original);
+        }
+        RefreshTabStrip();
+        return true;
+    }
+
     void EnableLargeFileEditing() {
         // Reopen the currently viewed read-only large file through the editable
         // piece-table backend. The mapped viewer stays the default so the fast
@@ -3793,6 +3864,7 @@ private:
     bool lastFindDown_{true};
     bool preferredWordWrap_{false};
     bool preferredLineNumbers_{false};
+    bool preferredRightToLeft_{false};
     bool statusBarVisible_{true};
     bool tabBarVisible_{true};
     bool darkMode_{false};

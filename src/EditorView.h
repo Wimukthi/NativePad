@@ -20,6 +20,10 @@ class LargeTextDocument;
 constexpr UINT WM_EDITOR_CHANGED = WM_APP + 101;
 constexpr UINT WM_EDITOR_CURSOR_CHANGED = WM_APP + 102;
 constexpr UINT WM_EDITOR_ZOOM_CHANGED = WM_APP + 103;
+// Sent when the user presses the classic edit-control reading-order shortcut
+// (Ctrl+Right Shift for right-to-left, Ctrl+Left Shift for left-to-right).
+// WPARAM is 1 for right-to-left and 0 for left-to-right.
+constexpr UINT WM_EDITOR_READING_ORDER_REQUEST = WM_APP + 104;
 
 struct EditorTheme {
     COLORREF background{};
@@ -115,6 +119,12 @@ public:
     [[nodiscard]] bool WordWrap() const noexcept;
     void SetShowLineNumbers(bool enabled);
     [[nodiscard]] bool ShowLineNumbers() const noexcept;
+    // Right-to-left reading order: paragraphs start at the right edge and use
+    // an RTL base direction, as in classic Notepad's "Right to left Reading
+    // order" option. Mixed-direction text is laid out by DirectWrite either way.
+    void SetRightToLeft(bool enabled);
+    [[nodiscard]] bool RightToLeft() const noexcept;
+    void CancelReadingOrderShortcut() noexcept;
     void SetReadOnly(bool readOnly) noexcept;
     void OnDpiChanged(UINT dpi);
     void ResetDeviceResources();
@@ -166,6 +176,14 @@ private:
         std::size_t length{0};
     };
 
+    // Horizontal geometry of one visual row. Plain ASCII left-to-right rows use
+    // the fast monospace grid; rows with complex scripts (Arabic, Hebrew,
+    // combining marks, CJK...), syntax highlighting, or right-to-left reading
+    // order go through a DirectWrite layout so caret, selection, and hit
+    // testing follow the shaped and bidi-reordered glyphs. Defined in the .cpp
+    // because it holds a DirectWrite layout.
+    struct RowGeometry;
+
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -216,6 +234,13 @@ private:
     [[nodiscard]] std::size_t IndexedLineCount() const noexcept;
     [[nodiscard]] std::size_t IndexedMaxLineLength() const noexcept;
     std::size_t HitTest(int x, int y) const;
+    void BuildRowGeometry(const VisualRow& visual, RowGeometry& geometry) const;
+    [[nodiscard]] std::size_t RowUnitToIndex(const RowGeometry& geometry, std::size_t unitOffset) const noexcept;
+    [[nodiscard]] std::size_t RowIndexToUnit(const RowGeometry& geometry, std::size_t index) const noexcept;
+    [[nodiscard]] float RowCaretOffsetDips(const RowGeometry& geometry, std::size_t unitOffset) const;
+    [[nodiscard]] float RowCaretX(const RowGeometry& geometry, std::size_t unitOffset) const;
+    [[nodiscard]] std::size_t RowHitTest(const RowGeometry& geometry, float xDip) const;
+    [[nodiscard]] std::size_t CaretVisualRowIndex() const;
     std::size_t LineStart(std::size_t line) const;
     std::size_t LineEnd(std::size_t line) const;
     std::size_t LineLength(std::size_t line) const;
@@ -280,6 +305,13 @@ private:
     mutable std::size_t visualRowCacheColumns_{0};
     mutable std::size_t totalVisualRows_{1};
     mutable bool visualRowCacheValid_{false};
+    // Widest laid-out row seen since the last layout invalidation, in columns.
+    // Shaped text can be wider than its character count suggests (CJK, wide
+    // fallback fonts), so horizontal scrolling must cover it.
+    mutable std::size_t measuredMaxColumns_{0};
+    // 0 = none, 1 = Ctrl+Right Shift pending (RTL), 2 = Ctrl+Left Shift (LTR).
+    int pendingReadingOrder_{0};
+    bool rightToLeft_{false};
     bool dragging_{false};
     bool readOnly_{false};
     bool wordWrap_{false};

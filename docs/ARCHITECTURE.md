@@ -138,6 +138,17 @@ ranges. Plain text, mapped large files, and editable large files stay on the
 single-brush path, so the large-file backends do not acquire a whole-document
 parser or cache.
 
+Horizontal geometry has two paths. Rows of plain ASCII/Latin text in
+left-to-right mode use a monospace grid (`column * charWidth`), which keeps the
+common case allocation-free. A row switches to a per-row `IDWriteTextLayout` when
+it contains characters at or above U+0300 (combining marks, Hebrew, Arabic,
+Indic, CJK, emoji), is syntax highlighted, or right-to-left reading order is on.
+Caret position, selection rectangles, and mouse hits then come from DirectWrite
+hit testing, so bidi reordering and shaping are respected. Byte-backed UTF-8
+large files map layout text indices back to byte offsets per row. In
+right-to-left mode each row's layout box is anchored at the viewport's right
+edge and the horizontal scrollbar is mirrored.
+
 The caret is custom-drawn and blinked on a timer using the system caret blink
 interval, because the editor does not use the Win32 caret APIs.
 
