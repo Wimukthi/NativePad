@@ -179,6 +179,43 @@ Independently of Follow Tail, NativePad re-checks the file whenever its window
 is activated and offers to reload if it changed on disk, warning first when
 unsaved edits would be lost.
 
+## Portable Mode
+
+The portable ZIP includes a file named `NativePad.portable` beside
+`NativePad.exe`. While that file is there, NativePad keeps everything it writes
+in a `Data` folder next to the executable instead of
+`%LOCALAPPDATA%\NativePad`:
+
+```text
+NativePad\
+  NativePad.exe
+  NativePad.portable
+  Data\
+    NativePad.ini   settings
+    Session\        open tabs and unsaved text from the last normal exit
+    Recovery\       crash-recovery journals
+```
+
+Copy the whole folder, for example to a USB stick, and your settings and notes
+go with it. Paths of files you had open are stored as they were, so a file on
+another drive reopens only if that path exists on the new PC.
+
+- **First run:** if this PC already has installed NativePad settings or a saved
+  session, NativePad offers to copy them into `Data`. The originals are not
+  moved or deleted. It asks only once.
+- **Read-only folders:** if the `Data` folder cannot be written (a
+  write-protected stick, or `Program Files`), NativePad warns and uses
+  `%LOCALAPPDATA%\NativePad` for that run.
+- **Updating:** **Check for Updates** opens the release page instead of running
+  the installer. Replace `NativePad.exe` with the one from the new ZIP and keep
+  `NativePad.portable` and `Data`.
+- **Turning it off:** delete `NativePad.portable`. To make an older ZIP copy
+  portable, create an empty `NativePad.portable` file beside the executable.
+
+The installer never adds `NativePad.portable`, so installed copies keep using
+`%LOCALAPPDATA%\NativePad`. In the sections below, read that path as `Data` for
+a portable copy.
+
 ## Session Restore
 
 On a normal exit, NativePad stores the tab order, active tab, paths, formats,
@@ -208,7 +245,8 @@ journaled.
 
 ## Settings
 
-Preferences live in `%LOCALAPPDATA%\NativePad\NativePad.ini` under a single
+Preferences live in `%LOCALAPPDATA%\NativePad\NativePad.ini` (or
+`Data\NativePad.ini` in [portable mode](#portable-mode)) under a single
 `[Settings]` section. Delete the file to return to defaults.
 
 | Key | Meaning |

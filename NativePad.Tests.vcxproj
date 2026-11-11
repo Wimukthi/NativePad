@@ -77,6 +77,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\AppDataPaths.cpp" />
     <ClCompile Include="src\DocumentBuffer.cpp" />
     <ClCompile Include="src\LargeTextDocument.cpp" />
     <ClCompile Include="src\LineIndex.cpp" />
@@ -86,6 +87,7 @@
     <ClCompile Include="src\SyntaxHighlighter.cpp" />
     <ClCompile Include="src\TextFileTypes.cpp" />
     <ClCompile Include="src\TextFormat.cpp" />
+    <ClCompile Include="tests\AppDataPathsTests.cpp" />
     <ClCompile Include="tests\DocumentBufferTests.cpp" />
     <ClCompile Include="tests\LargeTextDocumentTests.cpp" />
     <ClCompile Include="tests\LineIndexTests.cpp" />

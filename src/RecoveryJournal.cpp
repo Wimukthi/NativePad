@@ -1,5 +1,7 @@
 #include "RecoveryJournal.h"
 
+#include "AppDataPaths.h"
+
 #include <shlobj.h>
 
 #include <algorithm>
@@ -301,17 +303,11 @@ void RecoveryJournal::Clear() noexcept {
 }
 
 std::wstring RecoveryJournal::DefaultRootDirectory() {
-    PWSTR path = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &path);
-    if (FAILED(result) || path == nullptr) {
+    const DataRootInfo& data = ApplicationDataRoot();
+    if (data.root.empty()) {
         return {};
     }
-
-    std::filesystem::path directory(path);
-    CoTaskMemFree(path);
-    directory /= L"NativePad";
-    directory /= L"Recovery";
-    return directory.wstring();
+    return (std::filesystem::path(data.root) / L"Recovery").wstring();
 }
 
 std::optional<RecoverySnapshot> RecoveryJournal::ClaimAbandoned(const std::wstring& rootDirectory) {

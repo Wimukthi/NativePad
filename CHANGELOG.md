@@ -11,6 +11,19 @@ incremented automatically and does not by itself imply a release.
 
 Nothing yet.
 
+## [1.4.0.1] - 2026-11-11
+
+### Added
+
+- Portable mode. A `NativePad.portable` file beside `NativePad.exe` keeps
+  settings, the open-tab session with unsaved notes, and crash-recovery journals
+  in a `Data` folder next to the executable, so the folder can be carried on a
+  USB stick. The release ZIP now includes the marker; the installer does not.
+  The first portable run offers to copy this PC's existing settings and tabs,
+  a read-only folder falls back to `%LOCALAPPDATA%\NativePad` with a warning,
+  and portable copies update by opening the release page instead of running
+  the installer. ([#1](https://github.com/Wimukthi/NativePad/issues/1))
+
 ## [1.3.0.1] - 2026-11-09
 
 ### Added

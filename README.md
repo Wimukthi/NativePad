@@ -61,8 +61,9 @@ Download the latest build from the
 - **`NativePadSetup-<version>-win-x64.exe`** — Inno Setup installer. Adds a
   Start Menu shortcut and an optional desktop shortcut, and updates in place.
 - **`NativePad-<version>-win-x64.zip`** — portable. Extract and run
-  `NativePad.exe`; nothing is installed, and preferences are written to
-  `%LOCALAPPDATA%\NativePad\NativePad.ini`.
+  `NativePad.exe`; nothing is installed. Settings, open tabs, and unsaved notes
+  live in a `Data` folder beside the executable, so you can carry the folder on
+  a USB stick. See [Portable Mode](docs/USAGE.md#portable-mode).
 
 Requires 64-bit Windows 10 or later. Releases are currently unsigned, so
 SmartScreen may warn on first run.

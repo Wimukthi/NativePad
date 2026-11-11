@@ -1,7 +1,6 @@
 #include "Settings.h"
 
-#include <knownfolders.h>
-#include <shlobj.h>
+#include "AppDataPaths.h"
 
 #include <algorithm>
 #include <cstring>
@@ -17,34 +16,14 @@ namespace {
 constexpr wchar_t kSettingsSection[] = L"Settings";
 constexpr wchar_t kLegacySettingsKey[] = L"Software\\NativePad";
 
-std::optional<std::wstring> LocalAppDataPath() {
-    PWSTR path = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &path);
-    if (FAILED(result) || path == nullptr) {
-        return std::nullopt;
-    }
-
-    std::wstring value(path);
-    CoTaskMemFree(path);
-    return value;
-}
-
 std::optional<std::wstring> SettingsFilePath() {
-    const auto localAppData = LocalAppDataPath();
-    if (!localAppData) {
+    // %LOCALAPPDATA%\NativePad, or the Data folder of a portable copy.
+    const std::wstring directory = ApplicationDataDirectory(nullptr);
+    if (directory.empty()) {
         return std::nullopt;
     }
 
-    std::filesystem::path directory(*localAppData);
-    directory /= L"NativePad";
-
-    std::error_code ec;
-    std::filesystem::create_directories(directory, ec);
-    if (ec) {
-        return std::nullopt;
-    }
-
-    return (directory / L"NativePad.ini").wstring();
+    return (std::filesystem::path(directory) / L"NativePad.ini").wstring();
 }
 
 void WriteIniString(const std::wstring& path, const wchar_t* name, const std::wstring& value) {
@@ -109,7 +88,8 @@ void MigrateLegacyRegistrySettingsIfNeeded(const std::wstring& path) {
 
 std::optional<std::wstring> SettingsPathReady() {
     auto path = SettingsFilePath();
-    if (path) {
+    // A portable copy must not pick up whatever this PC's registry holds.
+    if (path && !IsPortableMode()) {
         MigrateLegacyRegistrySettingsIfNeeded(*path);
     }
     return path;

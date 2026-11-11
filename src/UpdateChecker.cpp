@@ -1,5 +1,7 @@
 #include "UpdateChecker.h"
 
+#include "AppDataPaths.h"
+
 #include <bcrypt.h>
 #include <knownfolders.h>
 #include <shlobj.h>
@@ -668,26 +670,13 @@ bool VerifyDigest(const std::vector<BYTE>& bytes, std::wstring_view expectedDige
 }
 
 std::optional<std::wstring> UpdateDirectory(std::wstring& error) {
-    PWSTR localAppData = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &localAppData);
-    if (FAILED(result) || localAppData == nullptr) {
-        error = L"Could not locate the local application data folder.";
-        return std::nullopt;
-    }
-
-    std::filesystem::path path(localAppData);
-    CoTaskMemFree(localAppData);
-    path /= L"NativePad";
-    path /= L"Updates";
-
-    std::error_code ec;
-    std::filesystem::create_directories(path, ec);
-    if (ec) {
+    const std::wstring path = ApplicationDataDirectory(L"Updates");
+    if (path.empty()) {
         error = L"Could not create the update download folder.";
         return std::nullopt;
     }
 
-    return path.wstring();
+    return path;
 }
 
 bool WriteBytesToFile(const std::wstring& path, const std::vector<BYTE>& bytes, std::wstring& error) {

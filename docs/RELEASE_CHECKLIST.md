@@ -216,8 +216,15 @@ Work top to bottom. Anything that fails blocks the release.
       `src/NativePad.rc`.
 - [ ] Leave `pack_with_upx` enabled for the normal release; use the uncompressed
       option only when documenting a compatibility or antivirus exception.
-- [ ] The ZIP contains `NativePad.exe`, `README.md`, `LICENSE`,
-      `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`, `licenses`, and `docs`.
+- [ ] The ZIP contains `NativePad.exe`, `NativePad.portable`, `README.md`,
+      `LICENSE`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`, `licenses`, and
+      `docs`; the installed application has no `NativePad.portable`.
+- [ ] Run from the extracted ZIP: `Data` appears beside the executable, a typed
+      note survives exit, and it is restored after moving the whole folder.
+- [ ] A first portable run on a PC with installed data offers to copy it once;
+      the installed data is unchanged afterwards.
+- [ ] A read-only portable folder warns and falls back to
+      `%LOCALAPPDATA%\NativePad`.
 - [ ] `licenses\source\darkmodelib` holds the complete corresponding
       Darkmodelib source, in both the ZIP and the installed application.
 - [ ] `NativePad.exe` launches from the extracted ZIP.

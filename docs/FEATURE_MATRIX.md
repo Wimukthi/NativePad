@@ -75,6 +75,7 @@ in [Usage](USAGE.md); this page is the inventory.
 | External change detection | On window activation, prompts to reload a file changed on disk, warning before discarding unsaved edits |
 | Session restore | Normal exit persists tab order, active tab, paths, formats, Follow Tail state, and unsaved normal/large-file content under `%LOCALAPPDATA%\NativePad\Session` |
 | Crash recovery | Dirty tabs have independent journals under `%LOCALAPPDATA%\NativePad\Recovery`; every abandoned journal can restore into its own tab |
+| Portable mode | `NativePad.portable` beside the executable keeps settings, session, and recovery in a `Data` folder next to it; the release ZIP ships with it |
 
 ## Known Limitations
 

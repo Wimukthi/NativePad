@@ -1,0 +1,8 @@
+This file makes NativePad portable.
+
+While it sits beside NativePad.exe, NativePad keeps its settings, open tabs,
+unsaved text, and crash-recovery journals in the Data folder next to it, so
+copying this folder (for example to a USB stick) takes your notes along.
+
+Delete this file to use %LOCALAPPDATA%\NativePad instead, like an installed
+copy. To update, replace NativePad.exe and keep this file and the Data folder.

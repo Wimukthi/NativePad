@@ -90,6 +90,13 @@ Use **Help > Set as Default Text Editor** inside NativePad instead: it registers
 the supported plain-text handlers and opens Windows Default Apps so you can
 confirm.
 
+## Portable ZIP
+
+The release workflow copies `installer\NativePad.portable` into the ZIP. That
+marker makes the extracted copy keep its settings, session, and recovery data in
+a `Data` folder beside `NativePad.exe`. The Inno Setup script never installs
+it, so installed copies keep using `%LOCALAPPDATA%\NativePad`.
+
 ## Signing
 
 Releases are currently unsigned. SmartScreen will warn on first run for both the

@@ -108,6 +108,7 @@
     <ClCompile Include="src\Printing.cpp" />
     <ClCompile Include="src\RecoveryJournal.cpp" />
     <ClCompile Include="src\SessionStore.cpp" />
+    <ClCompile Include="src\AppDataPaths.cpp" />
     <ClCompile Include="src\Settings.cpp" />
     <ClCompile Include="src\SyntaxHighlighter.cpp" />
     <ClCompile Include="src\TabStrip.cpp" />
@@ -149,6 +150,7 @@
     <ClInclude Include="src\RecoveryJournal.h" />
     <ClInclude Include="src\SessionStore.h" />
     <ClInclude Include="src\resource.h" />
+    <ClInclude Include="src\AppDataPaths.h" />
     <ClInclude Include="src\Settings.h" />
     <ClInclude Include="src\SyntaxHighlighter.h" />
     <ClInclude Include="src\TabStrip.h" />

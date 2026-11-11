@@ -1,5 +1,7 @@
 #include "SessionStore.h"
 
+#include "AppDataPaths.h"
+
 #include <windows.h>
 #include <shlobj.h>
 
@@ -417,16 +419,11 @@ const std::wstring& SessionStore::RootDirectory() const noexcept {
 }
 
 std::wstring SessionStore::DefaultRootDirectory() {
-    PWSTR path = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &path);
-    if (FAILED(result) || path == nullptr) {
+    const DataRootInfo& data = ApplicationDataRoot();
+    if (data.root.empty()) {
         return {};
     }
-    std::filesystem::path directory(path);
-    CoTaskMemFree(path);
-    directory /= L"NativePad";
-    directory /= L"Session";
-    return directory.wstring();
+    return (std::filesystem::path(data.root) / L"Session").wstring();
 }
 
 } // namespace NativePad

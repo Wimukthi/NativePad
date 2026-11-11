@@ -39,6 +39,7 @@
 #include "Printing.h"
 #include "RecoveryJournal.h"
 #include "resource.h"
+#include "AppDataPaths.h"
 #include "Settings.h"
 #include "SessionStore.h"
 #include "TabStrip.h"
@@ -195,8 +196,18 @@ public:
         : instance_(instance),
           dpi_(GetDpiForSystem()),
           darkMode_(IsSystemDarkMode()) {
+        // Settings must come from the right folder, so any first-run portable
+        // copy happens before preferences are read.
+        OfferPortableDataCopy();
         LoadPreferences();
         effectiveDarkMode_ = ConfigureNativeTheme(darkMode_, !darkModeForced_);
+        if (NativePad::ApplicationDataRoot().portableFallback) {
+            ShowStartupMessage(
+                L"NativePad found NativePad.portable but cannot write to the Data folder beside it, so it will keep "
+                L"settings and open tabs in this PC's user profile for now.\n\nCopy NativePad to a writable folder "
+                L"to keep your notes with the app.",
+                MessageDialogIcon::Warning);
+        }
         AddEmptySession(false);
     }
 
@@ -659,6 +670,48 @@ private:
         UpdateTitle();
         UpdateStatus();
         RefreshTabStrip();
+    }
+
+    void OfferPortableDataCopy() {
+        // The first run of a portable copy on a PC that already has installed
+        // NativePad data offers to bring its settings and tabs along. The
+        // originals are copied, never moved, and the question is asked once,
+        // because the Data folder exists from then on.
+        const NativePad::DataRootInfo& data = NativePad::ApplicationDataRoot();
+        if (data.location != NativePad::DataLocation::Portable || !data.portableFolderCreated) {
+            return;
+        }
+
+        const std::wstring localRoot = NativePad::LocalAppDataRoot();
+        if (!NativePad::LocalDataWorthCopying(localRoot)) {
+            return;
+        }
+
+        // Preferences are not loaded yet, so theme this prompt from the system
+        // setting; the constructor reconfigures with the saved override after.
+        const bool dark = ConfigureNativeTheme(darkMode_, true);
+        const int choice = ShowMessageDialog(
+            nullptr,
+            instance_,
+            dpi_,
+            dark,
+            L"NativePad",
+            L"This copy of NativePad is portable: it keeps settings and open tabs in the Data folder beside "
+            L"NativePad.exe.\n\nCopy the settings and open tabs NativePad saved on this PC into it? The originals "
+            L"stay where they are.",
+            MessageDialogIcon::Question,
+            MessageDialogButtons::YesNo,
+            IDYES);
+        if (choice == IDYES && !NativePad::CopyLocalDataToPortable(localRoot, data.root)) {
+            ShowMessageDialog(
+                nullptr,
+                instance_,
+                dpi_,
+                dark,
+                L"NativePad",
+                L"Some settings or tabs could not be copied into the portable Data folder.",
+                MessageDialogIcon::Warning);
+        }
     }
 
     void LoadPreferences() {
@@ -1729,6 +1782,22 @@ private:
 
         std::wstring message = L"NativePad ";
         message += result->update.version;
+        if (NativePad::IsPortableMode()) {
+            // The installer would put a second copy in Program Files and leave
+            // this one untouched, so a portable copy points at the ZIP instead.
+            message += L" is available.\n\nThis is a portable copy. Open the download page to get the new ZIP? "
+                       L"Replace NativePad.exe and keep the Data folder and NativePad.portable.";
+            if (ShowAppMessage(message, MessageDialogIcon::Question, L"NativePad Update", MessageDialogButtons::YesNo, IDYES) == IDYES) {
+                // The page URL comes from the release feed; only hand the shell
+                // a GitHub https link, never an arbitrary scheme or path.
+                const std::wstring& feedUrl = result->update.releaseUrl;
+                const std::wstring url = feedUrl.starts_with(L"https://github.com/")
+                                             ? feedUrl
+                                             : std::wstring(L"https://github.com/Wimukthi/NativePad/releases/latest");
+                ShellExecuteW(hwnd_, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            return;
+        }
         message += L" is available.\n\nDownload and install it now?";
         if (ShowAppMessage(message, MessageDialogIcon::Question, L"NativePad Update", MessageDialogButtons::YesNo, IDYES) == IDYES) {
             BeginUpdateDownload(result->update);

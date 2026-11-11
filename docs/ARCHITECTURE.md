@@ -29,8 +29,9 @@ Contrast integration layer.
 | Popup menus | `PopupMenu.*` | Owner-drawn menu and context-menu windows, plus the drop shadow |
 | Dialogs | `FontDialog.*`, `FindReplaceDialog.*`, `GoToDialog.*`, `AboutDialog.*`, `MessageDialog.*` | Custom theme-aware modal and modeless dialogs |
 | Printing | `Printing.*` | Pagination and spooling worker |
-| Settings | `Settings.*` | INI read/write under `%LOCALAPPDATA%\NativePad\NativePad.ini` |
-| Session restore | `SessionStore.*` | Versioned normal-exit manifest and content snapshots under `%LOCALAPPDATA%\NativePad\Session` |
+| App data location | `AppDataPaths.*` | Resolves, once per process, whether NativePad's files live in `%LOCALAPPDATA%\NativePad` or in the portable `Data` folder beside the executable (enabled by `NativePad.portable`), with a writable-folder check and fallback |
+| Settings | `Settings.*` | INI read/write of `NativePad.ini` in the app data folder |
+| Session restore | `SessionStore.*` | Versioned normal-exit manifest and content snapshots in the app data folder's `Session` directory |
 | Crash recovery | `RecoveryJournal.*` | Journaling of unsaved documents and recovery of journals abandoned by a crashed process |
 | Update checker | `UpdateChecker.*` | GitHub release discovery, installer download, SHA-256 verification |
 | Default editor | `DefaultEditor.*` | Per-user plain-text associations and the Windows Default Apps hand-off |
@@ -87,6 +88,24 @@ Startup consumes the manifest after validating all records and loading normal
 snapshots. This prevents an explicitly closed tab from returning after a later
 crash in the new process. Large snapshots remain mapped until their tabs are
 saved, explicitly closed, or snapshotted on the next normal exit.
+
+## App Data Location
+
+Settings, session, recovery, and update code never look up a folder
+themselves; they ask `AppDataPaths`. `ApplicationDataRoot()` decides once per
+process and caches the answer so every module agrees:
+
+- No `NativePad.portable` beside the executable: `%LOCALAPPDATA%\NativePad`.
+- Marker present: `<exe folder>\Data`, created if needed and proven writable by
+  writing and deleting a probe file. If that fails, the root falls back to
+  `%LOCALAPPDATA%\NativePad` and the shell warns at startup.
+
+`ResolveDataRoot` is the pure decision and is unit tested. On the first
+portable run on a PC with installed data, the shell offers
+`CopyLocalDataToPortable` before preferences are read; it copies `NativePad.ini`
+and the session snapshots (manifest last) and never removes the originals.
+Portable copies also skip the legacy registry settings import, and their update
+prompt opens the release page rather than running the installer.
 
 ## Document Backends
 

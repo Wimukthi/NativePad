@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\AppDataPaths.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\DocumentBuffer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -32,6 +35,9 @@
     </ClCompile>
     <ClCompile Include="src\TextFormat.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\AppDataPathsTests.cpp">
+      <Filter>Tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\DocumentBufferTests.cpp">
       <Filter>Tests</Filter>

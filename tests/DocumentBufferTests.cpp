@@ -35,6 +35,7 @@ int main() {
     void RunTextFormatTests();
     void RunSyntaxHighlighterTests();
     void RunTextFileTypesTests();
+    void RunAppDataPathsTests();
 
     using NativePad::DocumentBuffer;
 
@@ -108,5 +109,6 @@ int main() {
     RunTextFormatTests();
     RunSyntaxHighlighterTests();
     RunTextFileTypesTests();
+    RunAppDataPathsTests();
     return 0;
 }

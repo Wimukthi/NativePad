@@ -40,7 +40,7 @@ disabled state updates with selection and read-only document state.
 | Tab chrome | None | Optional | Clearing **View > Tab Bar** restores the classic menu-to-editor layout without discarding open documents |
 | Exit with unsaved work | Prompts to save | Stores and restores the tab session without prompting | Matches the session workflow expected from a tabbed editor; explicit Close Tab still prompts |
 | Very large files | Loads, or fails, slowly | Read-only memory-mapped view | Never silently truncates, never blocks on a full decode |
-| Settings storage | Registry | `%LOCALAPPDATA%\NativePad\NativePad.ini` | Portable; a ZIP install leaves no registry footprint |
+| Settings storage | Registry | `%LOCALAPPDATA%\NativePad\NativePad.ini`, or `Data\NativePad.ini` beside a portable copy | An INI leaves no registry footprint, and a portable copy carries its settings and notes with it |
 
 ## NativePad Additions
 
